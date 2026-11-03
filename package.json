@@ -1,0 +1,12 @@
+{
+  "name": "histologi-arm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Отдельный статический тренажёр по гистологическим препаратам",
+  "scripts": {
+    "start": "python3 -m http.server 8080 --bind 0.0.0.0",
+    "test": "node --test tests/*.test.js",
+    "check": "node --check js/app.js && node --check js/data/preparations.js"
+  },
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,29 @@
+# Исходные материалы: в репозиторий не кладём, готовые снимки уже в assets/
+*.pdf
+!assets/**/*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node
+node_modules/
+npm-debug.log*
+coverage/
+.nyc_output/
+
+# OS / редакторы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Временные артефакты
+dist/
+build/
+.cache/
+*.log
