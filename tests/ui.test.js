@@ -183,3 +183,50 @@ test('UI: маска первых букв осталась только в ре
   assert.ok(app.textContent.includes('Первые буквы'), 'в режиме ввода маска букв должна остаться');
   assert.ok(!/№\s*\d/.test(w.document.querySelector('.hintbox').textContent), 'номер препарата не должен показываться');
 });
+
+test('UI: чистые кадры вытесняют замазанные из тренировки', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w, app } = boot();
+  visit(w, 'train');
+  const mode = w.document.querySelector('[data-action="set-mode"][data-mode="choice"]');
+  if (mode && mode.getAttribute('aria-pressed') !== 'true') mode.click();
+  const all = w.document.querySelector('[data-action="set-count"][data-count="all"]');
+  if (all) all.click();
+  w.document.querySelector('[data-action="start"]').click();
+
+  const cleanGroups = new Set(w.HISTO_DATA.cards.filter(c => !c.masked).map(c => c.groupId));
+  const problems = [];
+  const revealChecked = new Set();
+  for (let i = 0; i < 400; i++) {
+    const wrap = w.document.querySelector('.quiz__imgwrap');
+    if (!wrap) break;
+    const src = (wrap.getAttribute('data-src') || '');
+    const card = w.HISTO_DATA.cards.find(c => src.endsWith(c.clean));
+    if (!card) { problems.push('неизвестная карточка: ' + src); break; }
+    if (card.masked && cleanGroups.has(card.groupId)) {
+      problems.push(`${card.id}: замазанный кадр группы ${card.groupId}, где есть чистый`);
+    }
+    // После ответа у чистого кадра группы с подписанным слайдом должна быть кнопка.
+    if (!card.masked && !revealChecked.has(card.groupId)) {
+      revealChecked.add(card.groupId);
+      w.document.querySelector('[data-action="skip"]').click();
+      const btn = w.document.querySelector('[data-action="toggle-reveal"]');
+      const mate = w.HISTO_DATA.cards.some(c => c.groupId === card.groupId && c.reveal);
+      if (mate && !btn) problems.push(`${card.id}: нет кнопки подписанного снимка`);
+      if (btn) {
+        btn.click();
+        const img = w.document.querySelector('.reveal img');
+        if (!img) problems.push(`${card.id}: подписанный снимок не раскрылся`);
+        else if (!/^assets\/reveal\//.test(img.getAttribute('src'))) {
+          problems.push(`${card.id}: раскрылось не фото с подписями`);
+        }
+        const hide = w.document.querySelector('[data-action="toggle-reveal"]');
+        if (hide) hide.click();
+      }
+    } else {
+      w.document.querySelector('[data-action="skip"]').click();
+    }
+    w.document.querySelector('[data-action="next"]').click();
+  }
+  assert.ok(revealChecked.size >= 10, 'слишком мало чистых карточек просмотрено: ' + revealChecked.size);
+  assert.deepEqual(problems, [], 'правило показа нарушено:\n' + problems.join('\n'));
+});

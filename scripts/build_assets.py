@@ -379,14 +379,21 @@ def tissue_score(patch: np.ndarray) -> float:
 
 
 def crop_header(rgb: np.ndarray) -> np.ndarray:
-    """Убирает верхнюю полосу с названием препарата."""
+    """Убирает верхнюю полосу с названием препарата, сохраняя сам снимок.
+
+    Заголовок — тёмная строка на светлой бумаге; тёмный фон вокруг окуляра
+    (у него мало светлых пикселей) заголовком не считается.
+    """
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     sat, val = hsv[:, :, 1], hsv[:, :, 2]
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    paper = (gray > 200).mean(axis=1)
     tissue = ((sat > 25) & (val > 40) & (val < 250)).mean(axis=1)
     limit = int(rgb.shape[0] * 0.22)
     for y in range(limit):
+        # Ткань пошла, а над ней не бумага, а сразу снимок — обрезать нечего.
         if tissue[y] > 0.55:
-            return rgb[max(0, y - 2):, :].copy()
+            return rgb[max(0, y - 2):, :].copy() if paper[max(0, y - 12):y].mean() > 0.4 else rgb
     return rgb
 
 
@@ -407,9 +414,17 @@ def crop_slide(rgb: np.ndarray) -> np.ndarray:
     # Название препарата сверху: чёрная строка над тканью.
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     H = gray.shape[0]
+    # Кадр, снятый в окуляр, — светлый кружок в тёмной виньетке. Её верхние
+    # строки тоже сплошь «чернила», и раньше они принимались за заголовок:
+    # у роговицы из-за этого срезалась верхняя треть кадра с передним
+    # эпителием. Виньетку за строку заголовка не считаем.
+    vignette = False
+    edge = gray[: max(4, int(H * 0.10))]
+    if float((edge < 90).mean()) > 0.15 and float((edge > 150).mean()) > 0.15:
+        vignette = True
     top = gray[: int(H * 0.22), :]
     ink = ((top < 120) & (top > 0)).astype(np.uint8)
-    if ink.size and ink.mean() > 0.0005:
+    if not vignette and ink.size and ink.mean() > 0.0005:
         rows = np.where(ink.mean(axis=1) > 0.002)[0]
         if len(rows):
             bottom = int(rows.max()) + 5
@@ -833,6 +848,8 @@ def main() -> int:
     ap.add_argument("--out", default=str(ROOT), help="Корень проекта")
     ap.add_argument("--only-hints", action="store_true",
                     help="Обновить только описания препаратов, не пересобирая ассеты")
+    ap.add_argument("--only-pages", default="",
+                    help="Пересобрать только эти слайды: «0113:14,15» (тег PDF:страницы)")
     args = ap.parse_args()
     pdf_dir = Path(args.pdf_dir)
     out = Path(args.out)
@@ -883,11 +900,35 @@ def main() -> int:
 
     prep_dir = out / "assets" / "prep"
     reveal_dir = out / "assets" / "reveal"
-    for d in (prep_dir, reveal_dir):
-        if d.exists():
-            for f in d.glob("*.jpg"):
-                f.unlink()
-        d.mkdir(parents=True, exist_ok=True)
+    only_pages: set[tuple[str, int]] = set()
+    for part in filter(None, (p.strip() for p in args.only_pages.split(";"))):
+        tag, _, nums = part.partition(":")
+        for n in nums.split(","):
+            if n.strip():
+                only_pages.add((tag.strip(), int(n)))
+    partial = bool(only_pages)
+    dest = out / "js" / "data" / "preparations.js"
+    kept: list[dict] = []
+    old_groups: dict[str, dict] = {}
+    if partial:
+        # Точечная пересборка: трогаем только выбранные слайды, остальные
+        # карточки берём из готового манифеста как есть.
+        raw = dest.read_text(encoding="utf-8")
+        previous = json.loads(raw.split("=", 1)[1].rstrip().rstrip(";"))
+        old_groups = {g["id"]: g for g in previous["groups"]}
+        kept = [c for c in previous["cards"]
+                if (c["pdf"], c["page"]) not in only_pages]
+        for c in kept:
+            for rel in (c["clean"], c["reveal"]):
+                if rel and not (out / rel).exists():
+                    print(f"Нет файла {rel}; запустите полную сборку", file=sys.stderr)
+                    return 1
+    else:
+        for d in (prep_dir, reveal_dir):
+            if d.exists():
+                for f in d.glob("*.jpg"):
+                    f.unlink()
+            d.mkdir(parents=True, exist_ok=True)
 
     cards: list[dict] = []
     seen_xref: set[tuple[str, int]] = set()
@@ -924,6 +965,8 @@ def main() -> int:
     for (tag, pn), info in sorted(pages.items()):
         gid = GROUP_BY_PAGE.get((tag, pn))
         if not gid:
+            continue
+        if partial and (tag, pn) not in only_pages:
             continue
         imgs, text = info["imgs"], info["text"]
         key = (tag, pn)
@@ -993,20 +1036,28 @@ def main() -> int:
         # Страницы без изображений (текст) пропускаем.
         stats["text"] += 1
 
+    if partial:
+        cards = kept + cards
+
     groups_out = []
     for gid, title, number, stain, system, ranges in GROUPS:
-        groups_out.append({
+        group = {
             "id": gid, "title": title, "number": number, "stain": stain,
             "system": system, "hint": hints[gid],
             "slides": [f"{SLIDE_OFFSET[tag] + a}–{SLIDE_OFFSET[tag] + b}" for tag, a, b in ranges],
-        })
+        }
+        # Поля, которых этот генератор уже не пишет, при точечной пересборке
+        # сохраняем из прежнего манифеста.
+        for key, value in old_groups.get(gid, {}).items():
+            group.setdefault(key, value)
+        groups_out.append(group)
 
     data = {
         "version": 1,
         "generatedFrom": [f"Гистология_{'0113-0220' if t == '0113' else '0221-0330' if t == '0221' else '0331-0426'}-сжатый.pdf" for t in TAGS],
         "systems": [{"id": s[0], "title": s[1], "color": s[2]} for s in SYSTEMS],
         "groups": groups_out,
-        "cards": cards,
+        "cards": sorted(cards, key=lambda c: (c["pdf"], c["page"], c["id"])),
     }
     dest = out / "js" / "data" / "preparations.js"
     dest.parent.mkdir(parents=True, exist_ok=True)

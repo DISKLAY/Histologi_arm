@@ -31,6 +31,23 @@
     if (cardsByGroup[c.groupId]) cardsByGroup[c.groupId].push(c);
   });
 
+  /* У группы есть снимки, снятые без подписей? Тогда в тренировке замазанные
+     кадры той же группы ничего не добавляют: показываем чистый кадр, а
+     подписанный слайд человек открывает кнопкой после ответа. */
+  var cleanGroups = {};
+  cards.forEach(function (c) { if (!c.masked) cleanGroups[c.groupId] = true; });
+  function trainingCards(list) {
+    var out = list.filter(function (c) { return !c.masked || !cleanGroups[c.groupId]; });
+    return out.length ? out : list;
+  }
+  /* Чистый кадр без своего подписанного слайда: показываем подписанный снимок
+     другого кадра той же группы — препарат тот же, разбор всё равно нужен. */
+  function revealFor(card) {
+    if (card.reveal) return card.reveal;
+    var mate = (cardsByGroup[card.groupId] || []).filter(function (c) { return c.reveal; })[0];
+    return mate ? mate.reveal : null;
+  }
+
   /* ------------------------------------------------------------- состояние */
   function defaults() {
     return {
@@ -119,7 +136,7 @@
       if (filter === 'wrong' && prog(c.id).wrong === 0) return false;
       return true;
     });
-    return out;
+    return trainingCards(out);
   }
   function makeOptions(card) {
     var right = card.groupId, g = groupById[right];
@@ -373,10 +390,10 @@
         '<div class="feedback__chips"><span class="badge">' + esc(sys.title) + '</span> <span class="badge">' + esc(g.stain) + '</span>' + (g.number ? ' <span class="badge">№ ' + esc(g.number) + '</span>' : '') + '</div>' +
         '<p class="feedback__desc" style="margin-top:10px">' + esc(g.hint) + '</p>' +
         '<div class="feedback__actions">' +
-          (card.reveal ? '<button type="button" class="btn btn--sm" data-action="toggle-reveal">' + (revealed ? 'Скрыть подписи' : 'Показать подписанный снимок') + '</button>' : '') +
+          (revealFor(card) ? '<button type="button" class="btn btn--sm" data-action="toggle-reveal">' + (revealed ? 'Скрыть подписи' : 'Показать подписанный снимок') + '</button>' : '') +
           '<button type="button" class="btn btn--sm" data-action="train-group">Тренировать этот препарат</button>' +
         '</div>' +
-        (revealed && card.reveal ? '<div class="reveal"><img src="' + esc(card.reveal) + '" alt="Подписанный вариант препарата"><p class="muted" style="font-size:.76rem;margin-top:6px">Исходный слайд с подписями — для разбора.</p></div>' : '') +
+        (revealed && revealFor(card) ? '<div class="reveal"><img src="' + esc(revealFor(card)) + '" alt="Подписанный вариант препарата"><p class="muted" style="font-size:.76rem;margin-top:6px">Исходный слайд с подписями — для разбора.</p></div>' : '') +
       '</div>' +
       '<div class="quiz__bottom"><span class="muted" style="font-size:.8rem">' + esc(card.source) + '</span>' +
         '<button type="button" class="btn btn--primary" data-action="next">' + (s.idx + 1 >= s.ids.length ? 'Завершить →' : 'Следующий →') + '</button></div>';
@@ -916,9 +933,9 @@
         startSession(poolFor(state.settings, 'all').map(function (x) { return x.id; }),
           { all: state.settings.count === 'all', label: 'Тренировка' }); break;
       case 'start-wrong':
-        startSession(cards.filter(function (x) { return state.progress[x.id] && state.progress[x.id].wrong > 0; }).map(function (x) { return x.id; }), { all: true, label: 'Ошибки' }); break;
+        startSession(trainingCards(cards.filter(function (x) { return state.progress[x.id] && state.progress[x.id].wrong > 0; })).map(function (x) { return x.id; }), { all: true, label: 'Ошибки' }); break;
       case 'start-fav':
-        startSession(cards.filter(function (x) { return state.progress[x.id] && state.progress[x.id].favorite; }).map(function (x) { return x.id; }), { all: true, label: 'Избранное' }); break;
+        startSession(trainingCards(cards.filter(function (x) { return state.progress[x.id] && state.progress[x.id].favorite; })).map(function (x) { return x.id; }), { all: true, label: 'Избранное' }); break;
       case 'answer':
         card = currentCard(); if (card) answer(card, gid, ''); break;
       case 'check-input':
@@ -962,7 +979,7 @@
       case 'train-group-from':
         if (gid) {
           if (a === 'train-group-from') closeModal();
-          startSession((cardsByGroup[gid] || []).map(function (c) { return c.id; }), { all: true, label: groupById[gid].title });
+          startSession(trainingCards(cardsByGroup[gid] || []).map(function (c) { return c.id; }), { all: true, label: groupById[gid].title });
         }
         break;
       case 'open-group': openGroup(gid); break;
