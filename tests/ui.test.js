@@ -739,6 +739,16 @@ test('UI: до ответа в тренировке нет подсказок �
         problems.push('виден номер слайда: ' + cap.slice(0, 40));
       }
       if (/№\s*\d/.test(chips.join(' '))) problems.push('в плашке есть номер препарата');
+      // Подсказка по H не должна называть раздел: «Эндокринная система»
+      // это половина ответа. Только ткань и окраска.
+      const hintBtn = w.document.querySelector('[data-action="hint"]');
+      if (hintBtn) {
+        hintBtn.click();
+        const sub = (w.document.querySelector('.quiz__sub') || {}).textContent || '';
+        w.HISTO_DATA.systems.forEach(sys => {
+          if (sub.includes(sys.title)) problems.push('в подсказке раздел «' + sys.title + '»');
+        });
+      }
       w.HISTO_DATA.systems.forEach(sys => {
         if (cap.includes(sys.title) || chips.includes(sys.title)) {
           problems.push('виден раздел «' + sys.title + '»');
