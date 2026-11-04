@@ -161,7 +161,10 @@
     state.session = {
       ids: list, idx: 0, mode: opts.mode || state.settings.mode,
       label: opts.label || 'Тренировка', answers: {}, options: options,
-      started: Date.now(), hinted: {}, finished: false
+      started: Date.now(), hinted: {}, finished: false,
+      // Откуда пришли: тренировку одного препарата запускают из атласа или из
+      // разбора посреди большой сессии, и после неё нужно вернуться туда же.
+      parent: opts.parent || null
     };
     save();
     // Сессию можно запустить откуда угодно (атлас, избранное, статистика):
@@ -207,6 +210,20 @@
     s.answers[card.id] = { correct: correct, picked: pickedGid || null, text: text || '', revealed: false };
     record(card, correct);
     render();
+  }
+  /* Возврат из тренировки одного препарата в ту сессию, из которой её
+     запустили. Родительская сессия сохранена целиком: тот же вопрос, те же
+     ответы и подсказки, поэтому возвращаешься ровно туда, где был. */
+  function hasParent(s) { return !!(s && s.parent && s.parent.from === 'session' && s.parent.session); }
+  function parentLabel(s) { return hasParent(s) ? (s.parent.session.label || '') : ''; }
+  function backToParent() {
+    var s = state.session, p = s && s.parent;
+    if (!p || p.from !== 'session' || !p.session) return false;
+    state.session = p.session;
+    save();
+    if (route() !== 'train') go('train'); else render(true);
+    toast('Вернулись к прошлой тренировке');
+    return true;
   }
   function next() {
     var s = state.session;
@@ -374,7 +391,9 @@
       '<div class="quiz__progress"><i style="width:' + pct(s.idx, s.ids.length) + '%"></i></div>' +
       '<div class="quiz__top">' +
         '<div class="quiz__nav">' +
-          '<button type="button" class="btn btn--sm btn--ghost quiz__prev" data-action="prev"' + (s.idx > 0 ? '' : ' disabled') + ' title="Вернуться к предыдущему вопросу (←)">← Назад</button>' +
+          (hasParent(s)
+            ? '<button type="button" class="btn btn--sm btn--ghost quiz__prev" data-action="back-to-parent" title="Прервать эту тренировку и вернуться к прошлой">← К прошлой тренировке</button>'
+            : '<button type="button" class="btn btn--sm btn--ghost quiz__prev" data-action="prev"' + (s.idx > 0 ? '' : ' disabled') + ' title="Вернуться к предыдущему вопросу (←)">← Назад</button>') +
           '<span class="quiz__count">Вопрос ' + (s.idx + 1) + ' из ' + s.ids.length + '</span>' +
         '</div><span class="badge">' + esc(s.label) + '</span></div>' +
       '<div class="quiz__question">Что за препарат на снимке?</div>' +
@@ -735,7 +754,9 @@
       '<h1 style="font-size:1.8rem">Сессия завершена</h1>' +
       '<p class="muted" style="margin-top:8px">' + correct + ' верных из ' + s.ids.length + ' · ' + esc(s.label) + '</p>' +
       '<div class="hero__actions" style="justify-content:center">' +
-        '<button type="button" class="btn btn--primary" data-action="restart">Ещё раз</button>' +
+        (hasParent(s) ? '<button type="button" class="btn btn--primary" data-action="back-to-parent">← Вернуться к тренировке' +
+          (parentLabel(s) ? ' «' + esc(parentLabel(s)) + '»' : '') + '</button>' : '') +
+        '<button type="button" class="btn' + (hasParent(s) ? '' : ' btn--primary') + '" data-action="restart">Ещё раз</button>' +
         (wrong.length ? '<button type="button" class="btn" data-action="repeat-wrong">Повторить ошибки (' + wrong.length + ')</button>' : '') +
         '<a class="btn btn--ghost" href="#/atlas">В атлас</a>' +
       '</div>' +
@@ -1200,9 +1221,9 @@
         }
         break;
       case 'restart':
-        if (s) startSession(s.ids, { all: true, mode: s.mode, label: s.label }); break;
+        if (s) startSession(s.ids, { all: true, mode: s.mode, label: s.label, parent: s.parent }); break;
       case 'repeat-wrong':
-        if (s) startSession(s.ids.filter(function (id) { return s.answers[id] && !s.answers[id].correct; }), { all: true, mode: s.mode, label: 'Ошибки' });
+        if (s) startSession(s.ids.filter(function (id) { return s.answers[id] && !s.answers[id].correct; }), { all: true, mode: s.mode, label: 'Ошибки', parent: s.parent });
         break;
       case 'new-session':
         state.session = null; save(); render(true); break;
@@ -1212,9 +1233,16 @@
       case 'train-group-from':
         if (gid) {
           if (a === 'train-group-from') closeModal();
-          startSession(trainingCards(cardsByGroup[gid] || []).map(function (c) { return c.id; }), { all: true, label: groupById[gid].title });
+          // Если запускаем посреди другой сессии — сохраняем её целиком
+          // (вопрос, ответы, подсказки), чтобы потом вернуться.
+          var parent = s && !sessionDone() ? (s.parent ? s.parent.session : s) : null;
+          startSession(trainingCards(cardsByGroup[gid] || []).map(function (c) { return c.id; }), {
+            all: true, label: groupById[gid].title,
+            parent: parent ? { from: 'session', session: parent } : null
+          });
         }
         break;
+      case 'back-to-parent': backToParent(); break;
       case 'open-group': openGroup(gid); break;
       case 'close-modal': closeModal(); break;
       case 'zoom': openLightbox(t.getAttribute('data-src'), t.getAttribute('data-cap')); break;

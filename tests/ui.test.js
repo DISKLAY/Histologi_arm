@@ -480,3 +480,64 @@ test('Данные: щитовидная железа показывает по�
     assert.ok(b > 20000, `${c.id}: подписанный слайд подозрительно маленький (${b} Б)`);
   }
 });
+
+test('UI: после тренировки одного препарата можно вернуться в исходную сессию', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  const tick = () => new Promise(r => setTimeout(r, 20));
+  return (async () => {
+    visit(w, 'train');
+    w.document.querySelector('[data-action="start"]').click();
+    const count = () => w.document.querySelector('.quiz__count').textContent;
+
+    // Отвечаем на два вопроса — «застреваем» посреди большой сессии.
+    for (let i = 0; i < 2; i++) {
+      w.document.querySelector('.option').click();
+      w.document.querySelector('[data-action="next"]').click();
+    }
+    assert.match(count(), /^Вопрос 3 из /);
+
+    // Запускаем тренировку одного препарата из разбора.
+    w.document.querySelector('.option').click();
+    const group = w.document.querySelector('.quiz__top .badge').textContent;
+    w.document.querySelector('[data-action="train-group"]').click();
+    await tick();
+    assert.match(count(), /^Вопрос 1 из /, 'тренировка препарата не началась');
+    const back = w.document.querySelector('[data-action="back-to-parent"]');
+    assert.ok(back, 'в шапке нет кнопки возврата к прошлой тренировке');
+    assert.match(back.textContent, /К прошлой тренировке/);
+
+    // Проходим препарат до конца.
+    let guard = 0;
+    while (w.document.querySelector('.option') && guard++ < 40) {
+      w.document.querySelector('.option').click();
+      const nx = w.document.querySelector('[data-action="next"]');
+      if (nx) nx.click(); else break;
+    }
+    assert.ok(w.document.querySelector('.session-done'), 'сессия препарата не завершилась');
+    const done = w.document.querySelector('[data-action="back-to-parent"]');
+    assert.ok(done, 'на итогах нет кнопки возврата');
+    assert.match(done.textContent, /Вернуться к тренировке/);
+
+    // Возвращаемся — та же сессия, тот же вопрос, ответ на месте.
+    done.click();
+    await tick();
+    assert.match(count(), /^Вопрос 3 из /, 'вернулись не в ту сессию');
+    assert.ok(w.document.querySelector('.feedback'), 'ответ на текущем вопросе потерялся');
+    assert.equal(w.document.querySelector('[data-action="back-to-parent"]'), null, 'после возврата осталась кнопка возврата');
+    // Метка прошлой сессии сохранилась (а не «Стенка сердца»).
+    assert.equal(w.document.querySelector('.quiz__top .badge').textContent, 'Тренировка');
+  })();
+});
+
+test('UI: без исходной сессии кнопки возврата нет', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  const tick = () => new Promise(r => setTimeout(r, 20));
+  return (async () => {
+    visit(w, 'atlas');
+    w.document.querySelector('[data-action="open-group"][data-gid="heart"]').click();
+    w.document.querySelector('[data-action="train-group-from"]').click();
+    await tick();
+    assert.ok(w.document.querySelector('.quiz__count'), 'тренировка из атласа не открылась');
+    assert.equal(w.document.querySelector('[data-action="back-to-parent"]'), null, 'из атласа некуда возвращаться');
+  })();
+});
