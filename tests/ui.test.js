@@ -434,3 +434,49 @@ test('UI: «Коротко» в атласе не обрывается мног�
   }
   assert.deepEqual(problems, [], 'атлас:\n' + problems.join('\n'));
 });
+
+test('Данные: у «с подписями» есть подписи, кадры целые, нет повторов', () => {
+  // В файле есть комментарий-шапка, поэтому режем по самому имени.
+  const data = JSON.parse(dataSrc.slice(dataSrc.indexOf('window.HISTO_DATA =') + 'window.HISTO_DATA ='.length).replace(/;\s*$/, ''));
+
+  const problems = [];
+  // 1. «С подписями» не должен совпадать с «без подписей» и с другим кадром.
+  const byPath = {};
+  for (const c of data.cards) {
+    if (c.reveal) {
+      if (byPath[c.reveal]) problems.push(`reveal повторяется: ${c.reveal} (${byPath[c.reveal]} и ${c.id})`);
+      byPath[c.reveal] = c.id;
+    }
+  }
+  // 2. Если у группы есть замазанные кадры, у неё должен быть подписанный
+  //    слайд для разбора (чистым кадрам без подписей он не нужен).
+  for (const g of data.groups) {
+    const cs = data.cards.filter(c => c.groupId === g.id);
+    if (cs.some(c => c.masked) && !cs.some(c => c.reveal)) {
+      problems.push(g.id + ': есть замазанные кадры, но нет подписанного слайда');
+    }
+  }
+  // 3. Файлы вообще на месте и не пустые.
+  for (const c of data.cards) {
+    for (const rel of [c.clean, c.reveal]) {
+      if (!rel) continue;
+      const full = path.join(ROOT, rel);
+      if (!fs.existsSync(full)) { problems.push(`${c.id}: нет файла ${rel}`); continue; }
+      if (fs.statSync(full).size < 3000) problems.push(`${c.id}: подозрительно маленький файл ${rel}`);
+    }
+  }
+  assert.deepEqual(problems, [], problems.join('\n'));
+});
+
+test('Данные: щитовидная железа показывает подписи, а не пустой снимок', () => {
+  const data = JSON.parse(dataSrc.slice(dataSrc.indexOf('window.HISTO_DATA =') + 'window.HISTO_DATA ='.length).replace(/;\s*$/, ''));
+  const cards = data.cards.filter(c => c.groupId === 'thyroid');
+  assert.ok(cards.length >= 3, 'мало карточек щитовидной железы');
+  const signed = cards.filter(c => c.reveal);
+  assert.ok(signed.length >= 3, 'у щитовидной железы нет подписанных слайдов');
+  for (const c of signed) {
+    const a = fs.statSync(path.join(ROOT, c.clean)).size;
+    const b = fs.statSync(path.join(ROOT, c.reveal)).size;
+    assert.ok(b > 20000, `${c.id}: подписанный слайд подозрительно маленький (${b} Б)`);
+  }
+});

@@ -397,39 +397,90 @@ def crop_header(rgb: np.ndarray) -> np.ndarray:
 
 
 def crop_slide(rgb: np.ndarray) -> np.ndarray:
-    """Убирает белые поля слайда и верхнюю строку с названием препарата."""
-    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-    sat, val = hsv[:, :, 1], hsv[:, :, 2]
-    body = ((sat > 22) & (val > 40) & (val < 252)).astype(np.uint8)
-    body = cv2.morphologyEx(body, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
-    ys, xs = np.where(body > 0)
-    if len(xs) > 500:
-        x0, y0 = max(0, int(xs.min()) - 4), max(0, int(ys.min()) - 4)
-        x1 = min(rgb.shape[1], int(xs.max()) + 5)
-        y1 = min(rgb.shape[0], int(ys.max()) + 5)
-        if (x1 - x0) * (y1 - y0) < 0.93 * rgb.shape[0] * rgb.shape[1]:
-            rgb = rgb[y0:y1, x0:x1].copy()
+    """Убирает белые поля слайда и строку заголовка над снимком.
 
-    # Название препарата сверху: чёрная строка над тканью.
+    Главное правило: **кадр препарата остаётся целым**. Режем только
+    заголовок — строку «чернил», под которой идёт сплошная белая полоса, а
+    под полосой начинается снимок: так выглядят заголовки в этих PDF.
+    Если такого шаблона нет (рисунок с подписью под ним, кадр из окуляра),
+    ничего не трогаем — лучше оставить поля, чем срезать половину снимка.
+    """
+    # Поля: обрезаем только если белые, а не по «телу» кадра.
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    H = gray.shape[0]
-    # Кадр, снятый в окуляр, — светлый кружок в тёмной виньетке. Её верхние
-    # строки тоже сплошь «чернила», и раньше они принимались за заголовок:
-    # у роговицы из-за этого срезалась верхняя треть кадра с передним
-    # эпителием. Виньетку за строку заголовка не считаем.
-    vignette = False
+    ink_any = float((gray < 200).mean())
+    if 0.0 < ink_any < 0.995:
+        ys, xs = np.where(gray < 200)
+        if len(xs) > 500:
+            m = 2
+            x0, y0 = max(0, int(xs.min()) - m), max(0, int(ys.min()) - m)
+            x1 = min(rgb.shape[1], int(xs.max()) + m + 1)
+            y1 = min(rgb.shape[0], int(ys.max()) + m + 1)
+            if (x1 - x0) * (y1 - y0) < 0.97 * rgb.shape[0] * rgb.shape[1]:
+                rgb = rgb[y0:y1, x0:x1].copy()
+
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    H, W = gray.shape
+    paper_row = (gray > 200).mean(axis=1)
+    ink_row = ((gray < 120) & (gray > 0)).mean(axis=1)
+
+    # Виньетка окуляра: верх кадра тёмный и неоднородный — это не заголовок.
     edge = gray[: max(4, int(H * 0.10))]
     if float((edge < 90).mean()) > 0.15 and float((edge > 150).mean()) > 0.15:
-        vignette = True
-    top = gray[: int(H * 0.22), :]
-    ink = ((top < 120) & (top > 0)).astype(np.uint8)
-    if not vignette and ink.size and ink.mean() > 0.0005:
-        rows = np.where(ink.mean(axis=1) > 0.002)[0]
-        if len(rows):
-            bottom = int(rows.max()) + 5
-            if bottom < H * 0.25 and body[bottom:min(H, bottom + max(6, int(H * 0.06))), :].mean() > 0.10:
-                rgb = rgb[bottom:, :].copy()
+        return rgb
+
+    limit = int(H * 0.20)
+    in_ink = False
+    ink_end = 0
+    for y in range(limit):
+        if ink_row[y] > 0.015:
+            in_ink = True
+            ink_end = y
+        elif in_ink and paper_row[y] >= 0.92:
+            # Конец строки заголовка и белая полоса под ней. Проверяем, что
+            # полоса действительно отделяет снимок: ниже должно быть не бело.
+            y1 = min(H, y + max(12, int(H * 0.06)))
+            band = gray[y:y1, :]
+            if band.size and float((band > 200).mean()) < 0.85:
+                return rgb[y:, :].copy()
+            break
     return rgb
+
+
+def header_block(rgb: np.ndarray):
+    """Строка заголовка слайда («Препарат № 110 …») на белой бумаге.
+
+    Заголовок — это текст на бумаге, но с крупным шрифтом: его буквы при
+    пороге 110 слипаются в длинные строки, которые обычный поиск подписей
+    пропускает (там ограничение на ширину пятна). Ищем отдельно: мелкие
+    тёмные пятна на бумаге, склеиваем в строку и берём верхнюю.
+    """
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    h, w = gray.shape
+    top = int(h * 0.16)
+    band = gray[:top]
+    if band.size == 0:
+        return None
+    paper = float((band > 200).mean())
+    if paper < 0.35:
+        return None                       # верх кадра занят снимком, не бумагой
+    dark = (band < 130).astype(np.uint8)
+    if dark.mean() < 0.002:
+        return None
+    block = cv2.dilate(dark, np.ones((3, 15), np.uint8))
+    n, _, stats, _ = cv2.connectedComponentsWithStats(block, 8)
+    rows = []
+    for i in range(1, n):
+        x, y, bw, bh, area = (int(v) for v in stats[i])
+        if bw < 25 or bh < 6 or bh > top * 0.6:
+            continue
+        rows.append((y, y + bh))
+    if not rows:
+        return None
+    # Верхнюю строку заливаем по всей ширине кадра: заголовок бывает на
+    # бежевой плашке, и по отдельным буквам остаются обрывки.
+    y0 = min(r[0] for r in rows)
+    y1 = max(r[1] for r in rows if r[0] <= y0 + (top * 0.3))
+    return (0, max(0, y0 - 3), w, min(top, y1 + 3) - max(0, y0 - 3))
 
 
 def text_blocks(rgb: np.ndarray, min_paper: float = 0.45):
@@ -495,6 +546,10 @@ def mask_captions(rgb: np.ndarray) -> np.ndarray:
         x0, y0 = max(0, x - 4), max(0, y - 4)
         x1, y1 = min(w, x + bw + 4), min(h, y + bh + 4)
         out[y0:y1, x0:x1] = 255
+    head = header_block(out)
+    if head:
+        x, y, bw, bh = head
+        out[max(0, y - 4):min(h, y + bh + 4), max(0, x - 4):min(w, x + bw + 4)] = 255
     return out
 
 
@@ -857,7 +912,12 @@ def main() -> int:
     hashes: dict[str, list[int]] = defaultdict(list)
     stats = defaultdict(int)
 
-    def add_card(tag, pn, idx, rgb, gid, *, masked=False, has_labels=False, suffix="", frame=None):
+    def add_card(tag, pn, idx, rgb, gid, *, masked=False, has_labels=False, suffix="", frame=None,
+                 reveal_frame=None):
+        # Мелкие растры в PDF — это иконки и плашки, а не препараты.
+        if min(rgb.shape[0], rgb.shape[1]) < 80:
+            stats["tiny"] += 1
+            return
         h = dhash(rgb)
         for old in hashes[gid]:
             if ham(h, old) <= 8:
@@ -873,8 +933,9 @@ def main() -> int:
             info = pages[(tag, pn)]
             # Остальные кадры той же страницы: их подписанные слайды в кадр
             # этой карточки попадать не должны.
-            others = [o[3] for o in info["imgs"] if o[3] and o[3] != frame]
-            if render_reveal(info["page"], rp, frame=frame, others=others):
+            src = reveal_frame or frame
+            others = [o[3] for o in info["imgs"] if o[3] and o[3] != src]
+            if render_reveal(info["page"], rp, frame=src, others=others):
                 reveal_rel = f"assets/reveal/{cid}.jpg"
         cards.append({
             "id": cid,
@@ -930,11 +991,16 @@ def main() -> int:
                              masked=True, has_labels=True, suffix="-mask", frame=imgs[idx][3])
             else:
                 clean_idx = 0 if s0 <= s1 else 1
+                labeled_idx = 1 - clean_idx
                 rgb = (rgb0, rgb1)[clean_idx]
                 xref_key = (tag, imgs[clean_idx][0])
                 if xref_key not in seen_xref:
                     seen_xref.add(xref_key)
-                    add_card(tag, pn, clean_idx, rgb, gid, has_labels=True, frame=imgs[clean_idx][3])
+                    # Подписанный слайд снимаем с подписанного кадра: раньше
+                    # брали область чистого, и «с подписями» показывал тот же
+                    # снимок без единой подписи (щитовидная железа).
+                    add_card(tag, pn, clean_idx, rgb, gid, has_labels=True,
+                             frame=imgs[clean_idx][3], reveal_frame=imgs[labeled_idx][3])
             continue
 
         # 4. Один объект.

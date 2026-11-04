@@ -2550,16 +2550,6 @@ window.HISTO_DATA = {
       "pdf": "0221"
     },
     {
-      "id": "0221-095-0",
-      "groupId": "kidney_rat",
-      "clean": "assets/prep/0221-095-0.jpg",
-      "reveal": "assets/reveal/0221-095-0.jpg",
-      "masked": false,
-      "source": "Слайд 315",
-      "page": 95,
-      "pdf": "0221"
-    },
-    {
       "id": "0221-096-0",
       "groupId": "kidney_rat",
       "clean": "assets/prep/0221-096-0.jpg",
@@ -2747,16 +2737,6 @@ window.HISTO_DATA = {
       "masked": false,
       "source": "Слайд 352",
       "page": 22,
-      "pdf": "0331"
-    },
-    {
-      "id": "0331-024-0",
-      "groupId": "kidney_mallory",
-      "clean": "assets/prep/0331-024-0.jpg",
-      "reveal": "assets/reveal/0331-024-0.jpg",
-      "masked": false,
-      "source": "Слайд 354",
-      "page": 24,
       "pdf": "0331"
     },
     {
