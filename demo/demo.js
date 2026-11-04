@@ -137,11 +137,8 @@
 
   function buildOrder(c) {
     var idx = c.labels.map(function (_, i) { return i; });
-    if (st.mode === 'point') {
-      // «покажи, где структура» — спрашиваем только те подписи, у которых
-      // есть кончик стрелки: без него на снимке нечего нажимать
-      idx = idx.filter(function (i) { return c.labels[i].tips && c.labels[i].tips.length; });
-    }
+    // «Покажи, где структура» работает и для запечённых подписей: там нет
+    // кончика стрелки, зато есть сама плашка — нажать нужно на неё.
     return idx.sort(function (a, b) {
       var A = c.labels[a].b, B = c.labels[b].b;
       var ay = (A[1] + A[3]) / 2, by = (B[1] + B[3]) / 2;
@@ -218,14 +215,18 @@
     if (!shown) return;
     var k = shown / c.w;
     var raw = st.order.map(function (li) {
-      var tip = c.labels[li].tips && c.labels[li].tips[0];
-      return tip ? [tip[0] * k, tip[1] * k] : null;
+      var lab = c.labels[li];
+      var tip = lab.tips && lab.tips[0];
+      if (tip) return [tip[0] * k, tip[1] * k];
+      // У запечённых подписей кончика нет: номер ставим в саму плашку.
+      // Стрелка от плашки остаётся видимой — она и показывает структуру.
+      var b = lab.b;
+      return [(b[0] + b[2]) / 2 * k, (b[1] + b[3]) / 2 * k];
     });
     var placed = spread(raw.filter(Boolean), 22);
     var pi = 0;
     st.order.forEach(function (li, pos) {
       var lab = c.labels[li];
-      if (!(lab.tips && lab.tips[0])) return;
       var pt = placed[pi++];
       var el = document.createElement('div');
       el.className = 'tip';
@@ -233,6 +234,7 @@
       el.style.left = pt.x + 'px';
       el.style.top = pt.y + 'px';
       el.dataset.i = String(li);
+      if (!(lab.tips && lab.tips.length)) el.classList.add('on-plate');
       var res = st.results && st.results[li];
       if (st.results) {
         el.classList.add(res.kind === 'ok' ? 'done' : res.kind === 'near' ? 'near' : 'bad');
@@ -452,9 +454,9 @@
   $('lb').addEventListener('click', function () { this.classList.remove('on'); });
 
   var nLab = cards.reduce(function (n, c) { return n + c.labels.length; }, 0);
-  var nTips = cards.reduce(function (n, c) {
-    return n + c.labels.filter(function (l) { return l.tips.length; }).length;
-  }, 0);
+  // «Кончиков» больше нет у запечённых подписей: считаем все подписи,
+  // по которым можно спросить, — и на стрелке, и на плашке.
+  var nTips = nLab;
   var nPrep = new Set(cards.map(function (c) { return c.g; })).size;
   $('subtitle').textContent = cards.length + ' ' + plural(cards.length, 'снимок', 'снимка', 'снимков') +
     ' · ' + nLab + ' ' + plural(nLab, 'подпись', 'подписи', 'подписей') +

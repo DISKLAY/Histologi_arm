@@ -127,12 +127,70 @@ test('Структуры: в вопросы не попадают шапка с�
   assert.deepEqual(bad, [], 'вопросы из шапки: ' + bad.join('; '));
 });
 
-test('Структуры: демо спрашивает все подписи, а в режиме «покажи» — только с кончиком', () => {
+test('Структуры: демо спрашивает все подписи, включая запечённые', () => {
   const demo = path.join(ROOT, 'demo', 'demo.js');
   if (!fs.existsSync(demo)) return;
   const src = fs.readFileSync(demo, 'utf8');
   const order = src.slice(src.indexOf('function buildOrder'), src.indexOf('function renderPicker'));
   assert.ok(/labels\.map/.test(order), 'порядок вопросов должен строиться по всем подписям');
-  assert.ok(/tips/.test(order), 'в режиме «покажи» нужен фильтр по кончикам');
+  // У запечённых подписей кончика нет — в режиме «покажи» нажимают плашку,
+  // поэтому подписи без tips из вопросов больше не выкидываются.
+  assert.ok(!/idx = idx\.filter/.test(order),
+    'нельзя выбрасывать подписи без кончика: у запечённых его нет');
+  assert.ok(/on-plate/.test(src), 'номер запечённой подписи ставится на плашку');
   assert.ok(/st\.order\.length/.test(src), 'счётчик вопросов должен идти по st.order');
+});
+
+test('Запечённые подписи: карточки честные — без выдуманных кончиков', () => {
+  const file = path.join(ROOT, 'js', 'data', 'baked.js');
+  if (!fs.existsSync(file)) return;
+  const src = fs.readFileSync(file, 'utf8');
+  const data = JSON.parse(src.slice(src.indexOf('=') + 1).trim().replace(/;$/, ''));
+  assert.ok(data.cards.length > 0, 'должна быть хотя бы одна запечённая карточка');
+  const curated = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts', 'baked_labels.json'), 'utf8'));
+  data.cards.forEach(card => {
+    assert.ok(curated[card.id], 'нет названий для ' + card.id);
+    assert.equal(card.labels.length, curated[card.id].length,
+      'число названий и плашек должно совпадать: ' + card.id);
+    card.labels.forEach(l => {
+      // На растре кончик не вычисляется: номер ставится на плашку.
+      // Пустой tips — это честно, «примерная» точка была бы выдумкой.
+      assert.deepEqual(l.tips, [], 'у запечённой подписи не должно быть кончика');
+      assert.ok(l.text && l.text.trim().length > 2, 'у подписи должно быть название');
+      assert.equal(l.box.length, 4, 'у подписи должна быть рамка плашки');
+      const [x0, y0, x1, y1] = l.box;
+      assert.ok(x1 > x0 && y1 > y0, 'рамка должна быть непустой: ' + l.text);
+      assert.ok(x1 <= card.w && y1 <= card.h, 'рамка не должна вылезать за снимок: ' + l.text);
+    });
+    const files = ['js', 'data'].join('/');
+    [card.id + '-q.jpg', card.id + '-a.jpg'].forEach(name => {
+      const p = path.join(ROOT, 'assets', 'baked', name);
+      assert.ok(fs.existsSync(p), 'нет кадра ' + files + '/' + name);
+    });
+  });
+});
+
+test('Запечённые подписи: в кадре-вопросе нет названия препарата', () => {
+  const file = path.join(ROOT, 'js', 'data', 'baked.js');
+  if (!fs.existsSync(file)) return;
+  // Шапку «Препарат №…» закрашиваем в кадре-вопросе: см. header_plate
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'build_baked.py'), 'utf8');
+  assert.ok(/def header_plate/.test(src), 'шапка препарата должна находиться');
+  assert.ok(/make_pair[\s\S]{0,1200}header_plate\(img\)/.test(src),
+    'кадр-вопрос должен закрашивать шапку препарата');
+});
+
+test('Запечённые подписи: шапка препарата не становится отдельным вопросом', () => {
+  // «Препарат №92а «Кора большого мозга»» — это название препарата, а не
+  // структура. Если шапка попадёт в плашки, вопрос будет с готовым ответом.
+  const file = path.join(ROOT, 'js', 'data', 'baked.js');
+  if (!fs.existsSync(file)) return;
+  const src = fs.readFileSync(file, 'utf8');
+  const data = JSON.parse(src.slice(src.indexOf('=') + 1).trim().replace(/;$/, ''));
+  data.cards.forEach(card => {
+    card.labels.forEach(l => {
+      assert.ok(!/^Препарат\s*№/i.test(l.text), 'шапка препарата попала в вопросы: ' + card.id);
+      assert.ok(!/^Окраска\b/i.test(l.text), 'строка «Окраска» попала в вопросы: ' + card.id);
+    });
+  });
 });
