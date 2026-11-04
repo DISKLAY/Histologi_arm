@@ -305,12 +305,22 @@ img, svg { display: block; }
 .card-row__actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
 
 /* ------------------------------------------------------------------ статистика */
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin-bottom: 18px; }
-.stat-box { padding: 18px; }
+.stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; margin-bottom: 18px; }
+.stat-box { padding: 18px; min-width: 0; }
+.stat-num { overflow-wrap: anywhere; }
+/* Длинные названия разделов и сессий раньше не переносились и вылезали
+   за карточку: таблица ширилась под текст, а бейдж не переносился вовсе. */
+.table-wrap { width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table { width: 100%; border-collapse: collapse; font-size: .87rem; }
 .table th, .table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-.table th { color: var(--muted); font-weight: 650; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+.table th { color: var(--muted); font-weight: 650; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+.table td { overflow-wrap: anywhere; }
 .table tr:last-child td { border-bottom: 0; }
+.table--stats th:first-child, .table--stats td:first-child { width: 100%; }
+.table--stats td:not(:first-child) { white-space: nowrap; text-align: right; }
+.table--stats th:not(:first-child) { text-align: right; }
+.badge--system { white-space: normal; max-width: 100%; padding: 4px 10px; line-height: 1.35; }
+.summary-line__num { white-space: nowrap; }
 
 /* ------------------------------------------------------------------ оверлеи */
 .overlay, .lightbox { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 22px; background: rgba(12, 8, 24, .62); backdrop-filter: blur(5px); }
@@ -354,7 +364,7 @@ img, svg { display: block; }
   .mobile-nav:not([hidden]) { display: block; }
   .home-grid, .setup, .quiz { grid-template-columns: 1fr; }
   .setup__side { position: static; }
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid--3 { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 640px) {
@@ -363,7 +373,7 @@ img, svg { display: block; }
   .main { padding: 20px 14px 48px; }
   .hero { padding: 26px 22px; border-radius: var(--r-lg); }
   .hero__meta { gap: 14px; }
-  .grid--3, .grid--2, .tile-grid, .stats-grid { grid-template-columns: 1fr; }
+  .grid--3, .grid--2, .tile-grid, .stats-grid { grid-template-columns: minmax(0, 1fr); }
   .quiz__imgwrap { min-height: 220px; }
   .quiz__imgwrap img { max-height: 44vh; max-width: 100%; }
   .card--pad { padding: 16px; }

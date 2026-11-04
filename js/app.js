@@ -313,7 +313,7 @@
           '</div>' +
           '<h3 style="font-size:.9rem;margin-bottom:9px">Последние сессии</h3>' +
           (last.length ? last.map(function (s) {
-            return '<div class="summary-line"><span>' + esc(s.label) + ' · ' + fmtDate(s.at) + '</span><span>' + s.correct + ' / ' + s.total + '</span></div>';
+            return '<div class="summary-line"><span>' + esc(s.label) + ' · ' + fmtDate(s.at) + '</span><span class="summary-line__num">' + s.correct + ' / ' + s.total + '</span></div>';
           }).join('') : '<p class="muted" style="font-size:.85rem">Сессий ещё не было.</p>') +
           '<div style="margin-top:16px"><a class="btn btn--sm" href="#/stats">Вся статистика →</a></div>' +
         '</section>' +
@@ -967,15 +967,15 @@
       '</div>' +
       '<div class="grid grid--2">' +
         '<section class="card card--pad"><h2 style="font-size:1.05rem;margin-bottom:14px">По разделам</h2>' +
-          '<table class="table"><thead><tr><th>Раздел</th><th>Пройдено</th><th>Точность</th></tr></thead><tbody>' +
+          '<div class="table-wrap"><table class="table table--stats"><thead><tr><th>Раздел</th><th>Пройдено</th><th>Точность</th></tr></thead><tbody>' +
           ss.map(function (x) {
-            return '<tr><td><span class="badge badge--dot" style="color:' + x.s.color + '">' + esc(x.s.title) + '</span></td>' +
+            return '<tr><td><span class="badge badge--dot badge--system" style="color:' + x.s.color + '">' + esc(x.s.title) + '</span></td>' +
               '<td>' + x.touched + ' / ' + x.cards + '</td><td>' + (x.seen ? x.accuracy + '%' : '—') + '</td></tr>';
-          }).join('') + '</tbody></table></section>' +
+          }).join('') + '</tbody></table></div></section>' +
         '<section class="card card--pad"><h2 style="font-size:1.05rem;margin-bottom:14px">Сложные препараты</h2>' +
           (hard.length ? hard.map(function (c) {
             var p = state.progress[c.id];
-            return '<div class="summary-line"><span>' + esc(groupById[c.groupId].title) + '</span><span>' + p.wrong + ' ошибок / ' + p.seen + '</span></div>';
+            return '<div class="summary-line"><span>' + esc(groupById[c.groupId].title) + '</span><span class="summary-line__num">' + p.wrong + ' ошибок / ' + p.seen + '</span></div>';
           }).join('') : '<p class="muted" style="font-size:.87rem">Пока нет данных.</p>') +
           '<div class="divider"></div><h3 style="font-size:.92rem;margin-bottom:10px">Последние сессии</h3>' +
           (state.sessions.length ? state.sessions.slice(0, 6).map(function (s) {

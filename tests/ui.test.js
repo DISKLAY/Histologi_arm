@@ -541,3 +541,24 @@ test('UI: без исходной сессии кнопки возврата н�
     assert.equal(w.document.querySelector('[data-action="back-to-parent"]'), null, 'из атласа некуда возвращаться');
   })();
 });
+
+test('UI: длинные названия разделов в статистике не вылезают за карточку', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  visit(w, 'stats');
+  const tables = [...w.document.querySelectorAll('#app table.table')];
+  assert.ok(tables.length, 'в статистике нет таблицы разделов');
+  tables.forEach(t => {
+    assert.equal(t.parentElement.className.trim(), 'table-wrap', 'таблица не обёрнута в прокручиваемый контейнер');
+  });
+  const systems = [...w.document.querySelectorAll('#app .table--stats .badge')];
+  assert.ok(systems.length >= 10, 'не нашлись строки разделов');
+  systems.forEach(b => {
+    assert.ok(b.classList.contains('badge--system'), 'у названия раздела нет переноса строк: ' + b.textContent);
+  });
+  // Правила переноса и прокрутки действительно есть в стилях.
+  const css = fs.readFileSync(path.join(ROOT, 'css/styles.css'), 'utf8');
+  assert.match(css, /\.table-wrap\s*\{[^}]*overflow-x:\s*auto/, 'нет горизонтальной прокрутки для широких таблиц');
+  assert.match(css, /\.badge--system\s*\{[^}]*white-space:\s*normal/, 'бейдж раздела не переносится');
+  assert.match(css, /\.summary-line__num\s*\{[^}]*white-space:\s*nowrap/, 'числа в строках должны оставаться целыми');
+  assert.match(css, /\.stats-grid\s*\{[^}]*repeat\(4,\s*minmax\(0,\s*1fr\)\)/, 'колонки статистики могут распирать сетку');
+});
