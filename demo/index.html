@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Структуры — демо</title>
+<style>
+  :root {
+    --ink: #1d2433; --muted: #6b7688; --line: #dfe4ee; --card: #fff; --bg: #f4f6fb;
+    --ok: #2f9e6e; --ok-bg: #e7f6ee; --near: #d99327; --near-bg: #fdf3e2;
+    --bad: #d05656; --bad-bg: #fdecec; --accent: #4a7fd8; --accent-bg: #eaf1fd;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 18px 16px 72px; }
+  .top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
+  .top h1 { font-size: 21px; margin: 0; letter-spacing: -.2px; }
+  .top .sub { color: var(--muted); font-size: 13px; }
+
+  .picker { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 14px; }
+  .pick { flex: 0 0 auto; border: 1px solid var(--line); background: var(--card); border-radius: 10px;
+    padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink); white-space: nowrap; }
+  .pick[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-bg); }
+  .pick .n { color: var(--muted); font-size: 12px; }
+
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; }
+  @media (max-width: 920px) { .grid { grid-template-columns: 1fr; } }
+
+  .stage { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px;
+    box-shadow: 0 1px 2px rgba(29,36,51,.04); }
+  .meta { margin: 2px 4px 10px; }
+  .meta .t { font-weight: 600; }
+  .meta .p { color: var(--muted); font-size: 13px; }
+  .shot { position: relative; background: #fff; border-radius: 8px; overflow: hidden; }
+  .shot img { display: block; width: 100%; height: auto; cursor: zoom-in; }
+
+  /* жёлтая подсветка зоны, к которой относится текущая подпись */
+  .spot { position: absolute; border: 2px dashed #e0a100; background: rgba(255, 205, 60, .16);
+    border-radius: 8px; pointer-events: none; transition: all .2s ease; opacity: 0; }
+  .spot.on { opacity: 1; }
+
+  /* маркер на кончике стрелки */
+  .tip { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%;
+    background: rgba(74,127,216,.92); color: #fff; font-size: 13px; font-weight: 700;
+    display: grid; place-items: center; transform: translate(-50%, -50%);
+    box-shadow: 0 2px 6px rgba(20,30,50,.35); border: 2px solid #fff; z-index: 3;
+    transition: transform .18s ease, background .18s ease; }
+  .tip.cur { background: #e05656; transform: scale(1.25); }
+  .tip.done { background: #2f9e6e; }
+  .tip.near { background: #d99327; }
+  .tip.bad  { background: #b0b7c4; }
+  .tip.clickable { cursor: pointer; }
+  .tip.clickable:hover { transform: scale(1.15); }
+
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px;
+    box-shadow: 0 1px 2px rgba(29,36,51,.04); position: sticky; top: 14px; }
+  .mode { display: flex; gap: 6px; margin-bottom: 12px; }
+  .mode button { flex: 1; font-size: 12.5px; padding: 7px 8px; border-radius: 8px; }
+  .mode button[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent); color: #26406e; font-weight: 600; }
+
+  .counter { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .counter b { color: var(--ink); font-size: 15px; }
+  .bar { height: 5px; background: #eef1f7; border-radius: 99px; overflow: hidden; margin-bottom: 14px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+
+  .qlabel { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .qbox input { width: 100%; font: inherit; font-size: 16px; padding: 10px 12px;
+    border: 1.5px solid var(--line); border-radius: 10px; outline: 0; }
+  .qbox input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(74,127,216,.16); }
+  .shape { font-size: 12px; color: var(--muted); min-height: 18px; margin: 6px 0 10px; }
+  .shape code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1px; color: #43506b; }
+
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; font-size: 14px; border-radius: 9px; padding: 9px 15px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.ghost { border-color: transparent; color: var(--muted); padding-left: 6px; padding-right: 6px; }
+  .keys { margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.9; }
+  kbd { background: #eef1f7; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 6px; font: inherit; font-size: 11.5px; }
+
+  .queue { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .queue h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+  .qitem { display: flex; gap: 8px; align-items: center; font-size: 13px; padding: 5px 6px; border-radius: 7px; }
+  .qitem .dot { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--line);
+    flex: 0 0 auto; display: grid; place-items: center; font-size: 10px; color: var(--muted); }
+  .qitem.done .dot { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .qitem.near .dot { background: var(--near); border-color: var(--near); color: #fff; }
+  .qitem.bad .dot { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .qitem.cur { background: var(--accent-bg); }
+  .qitem .txt { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qitem.done .txt, .qitem.near .txt, .qitem.bad .txt { color: var(--ink); }
+
+  .verdict { margin-top: 14px; padding: 14px 16px; border-radius: 12px; background: #fbfcfe;
+    border: 1px solid var(--line); }
+  .verdict h2 { margin: 0 0 8px; font-size: 16px; }
+  .verdict .score { font-size: 14px; margin-bottom: 12px; color: var(--muted); }
+  .verdict .score b { font-size: 22px; color: var(--ink); }
+  ul.review { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 7px; }
+  ul.review li { display: flex; gap: 9px; align-items: baseline; font-size: 14px; flex-wrap: wrap; }
+  ul.review .mark { width: 16px; flex: 0 0 auto; font-weight: 700; }
+  ul.review .right { font-weight: 600; }
+  ul.review .given { color: var(--muted); }
+  ul.review .given.s { text-decoration: line-through; }
+  .tag { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+  .tag.ok { background: var(--ok-bg); color: #1d6b4a; }
+  .tag.near { background: var(--near-bg); color: #8a5b0f; }
+  .tag.bad { background: var(--bad-bg); color: #8f3232; }
+
+  .cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .cmp figure { margin: 0; }
+  .cmp img { width: 100%; border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in; }
+  .cmp figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  .note { margin-top: 18px; color: var(--muted); font-size: 13px; }
+  .note b { color: var(--ink); }
+  .settings { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 8px;
+    font-size: 12.5px; color: var(--muted); }
+  .settings label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  #stamp { font-size: 12.5px; }
+
+  #lb { position: fixed; inset: 0; background: rgba(12,16,24,.9); display: none; z-index: 50;
+    align-items: center; justify-content: center; padding: 20px; cursor: zoom-out; }
+  #lb.on { display: flex; }
+  #lb img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>Режим «Структуры» — демо</h1>
+    <span class="sub" id="subtitle"></span>
+  </div>
+
+  <div class="picker" id="picker"></div>
+
+  <div class="grid">
+    <section class="stage">
+      <div class="meta">
+        <div class="t" id="cardTitle">—</div>
+        <div class="p" id="cardSub"></div>
+      </div>
+      <div class="shot" id="shot">
+        <img id="pic" alt="">
+        <div class="spot" id="spot"></div>
+        <div id="tips"></div>
+      </div>
+      <div class="settings">
+        <label><input type="checkbox" id="optStrict"> строгая проверка</label>
+        <label><input type="checkbox" id="optShape" checked> подсказывать форму слова</label>
+        <span id="stamp"></span>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <div class="mode">
+        <button id="modeType" aria-pressed="true">Вписать название</button>
+        <button id="modePoint" aria-pressed="false">Показать на снимке</button>
+      </div>
+      <div class="counter" id="counter"></div>
+      <div class="bar"><i id="bar"></i></div>
+      <div class="qlabel" id="qlabel">Название структуры</div>
+      <div class="qbox" id="qbox">
+        <input id="answer" type="text" autocomplete="off" spellcheck="false" placeholder="впишите название">
+      </div>
+      <div class="shape" id="shape"></div>
+      <div class="btns">
+        <button class="primary" id="checkBtn">Проверить</button>
+        <button id="skipBtn" class="ghost">Пропустить</button>
+      </div>
+      <div class="queue" id="queue"></div>
+      <div class="keys">
+        <kbd>Enter</kbd> проверить · <kbd>Tab</kbd> пропустить · <kbd>←</kbd> к прошлой
+      </div>
+    </aside>
+  </div>
+
+  <div class="verdict" id="verdict" hidden></div>
+
+  <p class="note">
+    Номера стоят <b>на кончиках стрелок</b> — вопрос звучит так: «что это за структура под номером 1?».
+    В режиме «показать на снимке» номеров нет: его нужно найти среди стрелок самостоятельно.
+    Всё, что видно, собрано автоматически из PDF: <b id="nCards">0</b> снимков, <b id="nLabels">0</b> подписей,
+    <b id="nTips">0</b> найденных стрелок.
+  </p>
+</div>
+
+<div id="lb"><img alt=""></div>
+
+<script src="data.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>
