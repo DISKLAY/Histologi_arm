@@ -670,3 +670,22 @@ print(json.dumps(bad, ensure_ascii=False))
   catch (e) { return; }
   assert.deepEqual(JSON.parse(out), [], 'эти подсказки обрываются на полуслове');
 });
+
+test('UI: в галерее атласа нет повторов одного и того же снимка', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  visit(w, 'atlas');
+  const groups = [...w.document.querySelectorAll('[data-action="open-group"]')].map(a => a.getAttribute('data-gid'));
+  assert.ok(groups.length >= 50, 'не нашлись карточки атласа');
+  const bad = [];
+  groups.forEach(gid => {
+    w.document.querySelector('[data-action="open-group"][data-gid="' + gid + '"]').click();
+    const srcs = [...w.document.querySelectorAll('.modal__shot img')].map(i => i.getAttribute('src'));
+    const uniq = new Set(srcs);
+    if (uniq.size !== srcs.length) bad.push(gid + ': ' + srcs.length + ' картинок, уникальных ' + uniq.size);
+    // Счётчик в заголовке совпадает с числом картинок.
+    const head = [...w.document.querySelectorAll('.modal__body h3')].map(h => h.textContent).find(t => /^Снимки/.test(t));
+    assert.match(head, new RegExp('\\(' + srcs.length + '\\)'), 'неверный счётчик снимков в ' + gid + ': ' + head);
+    w.document.querySelector('[data-action="close-modal"]').click();
+  });
+  assert.deepEqual(bad, [], 'в этих группах атлас показывает один снимок дважды');
+});

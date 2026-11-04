@@ -919,16 +919,26 @@
     // настоящими подписями, и выноски читаются.
     var cs = all.filter(function (c) { return !c.masked; });
     if (!cs.length) cs = all;          // у группы нет чистых кадров — показываем замазанные
+    // Один и тот же файл не должен попасть в галерею дважды. У групп без
+    // чистых кадров подписанный слайд раньше выводился и в паре со своим
+    // кадром, и ещё раз блоком «подписанные слайды других кадров».
+    var shown = {};
+    function shot(src, isMask, capLeft, capRight, badge) {
+      if (!src || shown[src]) return '';
+      shown[src] = true;
+      return '<div class="modal__shot"><img src="' + esc(src) + '" alt="' + esc(capLeft) + '" loading="lazy" data-action="zoom" data-src="' + esc(src) + '" data-cap="' + esc(g.title) + ' · ' + esc(capLeft) + '">' +
+        '<p><span>' + esc(capLeft) + '</span><span' + (badge === 'mask' ? ' class="badge badge--mask"' : '') + '>' + esc(capRight) + '</span></p></div>';
+    }
     var shots = cs.map(function (c) {
       var label = c.masked ? 'подписи удалены' : (c.reveal ? 'чистый кадр' : 'снимок');
-      return '<div class="modal__shot"><img src="' + esc(c.clean) + '" alt="" loading="lazy" data-action="zoom" data-src="' + esc(c.clean) + '" data-cap="' + esc(g.title) + ' · ' + esc(c.source) + '">' +
-        '<p><span>' + esc(c.source) + '</span><span' + (c.masked ? ' class="badge badge--mask"' : '') + '>' + label + '</span></p></div>' +
-        (c.reveal ? '<div class="modal__shot"><img src="' + esc(c.reveal) + '" alt="Подписанный вариант" loading="lazy" data-action="zoom" data-src="' + esc(c.reveal) + '" data-cap="' + esc(g.title) + ' · подписанный слайд"><p><span>С подписями</span><span>разбор</span></p></div>' : '');
+      return shot(c.clean, c.masked, c.source, label, c.masked ? 'mask' : '') +
+        (c.reveal ? shot(c.reveal, false, 'С подписями', 'разбор', '') : '');
     }).join('');
-    // Подписанные слайды других кадров группы — тоже часть атласа.
-    var extra = all.filter(function (c) { return c.masked; }).map(function (c) {
-      return c.reveal ? '<div class="modal__shot"><img src="' + esc(c.reveal) + '" alt="Подписанный вариант" loading="lazy" data-action="zoom" data-src="' + esc(c.reveal) + '" data-cap="' + esc(g.title) + ' · подписанный слайд"><p><span>С подписями</span><span>разбор</span></p></div>' : '';
+    // Подписанные слайды остальных кадров группы — тоже часть атласа.
+    var extra = all.map(function (c) {
+      return c.reveal ? shot(c.reveal, false, 'С подписями', 'разбор', '') : '';
     }).join('');
+    var countShots = Object.keys(shown).length;
     openModal('<div class="modal__head"><div><h2>' + esc(g.title) + '</h2><p>' + esc(sys.title) + ' · ' + esc(g.stain) + (g.number ? ' · препарат № ' + esc(g.number) : '') + ' · ' + esc(g.slides.join(', ')) + '</p></div><button class="modal__close" data-action="close-modal" aria-label="Закрыть">×</button></div>' +
       '<div class="modal__body">' + theoryHtml(g) +
       // Подсказку показываем только если она не повторяет теорию: раньше тут
@@ -936,7 +946,7 @@
       (sameText(g.hint, g.theory) ? '' : '<p class="theory__hint">Коротко: ' + esc(shortHint(g)) + '</p>') +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 18px"><button type="button" class="btn btn--primary btn--sm" data-action="train-group-from" data-gid="' + gid + '">Тренировать этот препарат</button>' +
       '<button type="button" class="btn btn--sm" data-action="favorite-group" data-gid="' + gid + '">★ Добавить все в избранное</button></div>' +
-      '<h3 style="font-size:.95rem;margin-bottom:11px">Снимки' + (cs.length !== all.length ? ' (' + cs.length + ')' : ' (' + cs.length + ')') + '</h3><div class="modal__gallery">' + shots + extra + '</div></div>');
+      '<h3 style="font-size:.95rem;margin-bottom:11px">Снимки (' + countShots + ')</h3><div class="modal__gallery">' + shots + extra + '</div></div>');
   }
 
   /* ------------------------------------------------------------- рендер: списки */
