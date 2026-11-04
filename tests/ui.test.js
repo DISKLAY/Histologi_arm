@@ -408,3 +408,29 @@ test('UI: «Тренировать этот препарат» работает 
     assert.match(w.document.querySelector('.quiz__count').textContent, /^Вопрос 1 из /, 'сессия не началась заново');
   })();
 });
+
+test('UI: «Коротко» в атласе не обрывается многоточием и не дублирует теорию целиком', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  visit(w, 'atlas');
+  const problems = [];
+  for (const g of w.HISTO_DATA.groups) {
+    const card = w.document.querySelector(`[data-action="open-group"][data-gid="${g.id}"]`);
+    if (!card) { problems.push(g.id + ': нет карточки'); continue; }
+    card.click();
+    const items = [...w.document.querySelectorAll('.theory__list li')].map(li => li.textContent);
+    if (!items.length) problems.push(g.id + ': нет теории');
+    if (items.some(t => /…\s*$/.test(t))) problems.push(g.id + ': пункт теории с многоточием');
+    const hint = w.document.querySelector('.theory__hint');
+    if (hint) {
+      const t = hint.textContent.replace(/^Коротко:\s*/, '').trim();
+      if (/…\s*$/.test(t)) problems.push(g.id + ': «Коротко» обрывается многоточием');
+      if (!/[.!?]$/.test(t)) problems.push(g.id + ': «Коротко» без точки');
+      const norm = s => s.toLowerCase().replace(/[^a-zа-яё0-9]/g, '');
+      if (norm(t).length > 40 && norm(g.theory).startsWith(norm(t))) {
+        problems.push(g.id + ': «Коротко» — дубль начала теории');
+      }
+    }
+    w.document.querySelector('[data-action="close-modal"]').click();
+  }
+  assert.deepEqual(problems, [], 'атлас:\n' + problems.join('\n'));
+});

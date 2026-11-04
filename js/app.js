@@ -818,7 +818,10 @@
       parts.forEach(function (x) {
         if (!cur) { cur = x; return; }
         var isTerm = /^[А-ЯЁA-Z][^.!?…]{2,60}:/.test(x) || /^\d{1,2}\./.test(x);
-        if (isTerm) { blocks.push(cur); cur = x; }
+        // Длинный абзац без заголовков режем по границам предложений, иначе
+        // вся теория глазами читается одной простынёй.
+        var tooLong = cur.length > 220;
+        if (isTerm || tooLong) { blocks.push(cur); cur = x; }
         else cur += ' ' + x;
       });
       if (cur) blocks.push(cur);
@@ -853,6 +856,24 @@
         return '<li>' + esc(b) + '</li>';
       }).join('') + '</ol></section>';
   }
+  function sameText(a, b) {
+    var n = function (x) { return String(x || '').toLowerCase().replace(/[^a-zа-яё0-9]/g, ''); };
+    var x = n(a).replace(/…/g, ''), y = n(b);
+    if (!x || !y) return false;
+    return y.indexOf(x.slice(0, Math.min(80, x.length))) !== -1;
+  }
+  /* «Коротко» без обрыва: берём начало теории до последней целой фразы. */
+  function shortHint(g) {
+    var t = g.hintClue || '';
+    if (t) return t;
+    var raw = String(g.hint || g.theory || '').replace(/\s+/g, ' ').trim();
+    if (raw.length <= 300) return raw;
+    var cut = raw.slice(0, 300);
+    var end = Math.max(cut.lastIndexOf('.'), cut.lastIndexOf('!'), cut.lastIndexOf('?'));
+    if (end > 120) return cut.slice(0, end + 1);
+    var sp = cut.lastIndexOf(' ');
+    return cut.slice(0, sp > 0 ? sp : cut.length).replace(/[,;:—-]+$/, '') + '.';
+  }
   function openGroup(gid) {
     var g = groupById[gid], all = cardsByGroup[gid] || [], sys = systemById[g.system];
     // В атласе — только чистые кадры и подписанные слайды: замазанный кадр
@@ -872,7 +893,9 @@
     }).join('');
     openModal('<div class="modal__head"><div><h2>' + esc(g.title) + '</h2><p>' + esc(sys.title) + ' · ' + esc(g.stain) + (g.number ? ' · препарат № ' + esc(g.number) : '') + ' · ' + esc(g.slides.join(', ')) + '</p></div><button class="modal__close" data-action="close-modal" aria-label="Закрыть">×</button></div>' +
       '<div class="modal__body">' + theoryHtml(g) +
-      '<p class="theory__hint">Коротко: ' + esc(g.hint) + '</p>' +
+      // Подсказку показываем только если она не повторяет теорию: раньше тут
+      // стоял обрезанный на 260 знаках огрызок того же текста с многоточием.
+      (sameText(g.hint, g.theory) ? '' : '<p class="theory__hint">Коротко: ' + esc(shortHint(g)) + '</p>') +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 18px"><button type="button" class="btn btn--primary btn--sm" data-action="train-group-from" data-gid="' + gid + '">Тренировать этот препарат</button>' +
       '<button type="button" class="btn btn--sm" data-action="favorite-group" data-gid="' + gid + '">★ Добавить все в избранное</button></div>' +
       '<h3 style="font-size:.95rem;margin-bottom:11px">Снимки' + (cs.length !== all.length ? ' (' + cs.length + ')' : ' (' + cs.length + ')') + '</h3><div class="modal__gallery">' + shots + extra + '</div></div>');
