@@ -26,6 +26,8 @@ import numpy as np
 import pymupdf
 from PIL import Image
 
+_OCR = None
+
 ROOT = Path(__file__).resolve().parents[1]
 PDF_FILES = [
     "Гистология_0113-0220-сжатый.pdf",
@@ -284,65 +286,299 @@ def crop_header(rgb: np.ndarray) -> np.ndarray:
     return rgb
 
 
-def mask_captions(rgb: np.ndarray) -> np.ndarray:
-    """Аккуратно и непрозрачно замазывает подписи тоном окружающей ткани.
-
-    В маску попадают нейтрально-тёмный текст/рамки/стрелки и отдельные светлые элементы
-    выносок. Заливка непрозрачная, поэтому подписи не проступают; большие светлые участки
-    самой ткани не маскируются (ограничение по площади компоненты).
-    """
-    # Убираем белые поля слайда: к ним обычно приклеены выноски и «хвосты».
-    hsv0 = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-    tm = ((hsv0[:, :, 1] > 22) & (hsv0[:, :, 2] > 40) & (hsv0[:, :, 2] < 252)).astype(np.uint8)
-    tm = cv2.morphologyEx(tm, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
-    ys, xs = np.where(tm > 0)
+def crop_slide(rgb: np.ndarray) -> np.ndarray:
+    """Убирает белые поля слайда и верхнюю строку с названием препарата."""
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    sat, val = hsv[:, :, 1], hsv[:, :, 2]
+    body = ((sat > 22) & (val > 40) & (val < 252)).astype(np.uint8)
+    body = cv2.morphologyEx(body, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    ys, xs = np.where(body > 0)
     if len(xs) > 500:
         x0, y0 = max(0, int(xs.min()) - 4), max(0, int(ys.min()) - 4)
-        x1, y1 = min(rgb.shape[1], int(xs.max()) + 5), min(rgb.shape[0], int(ys.max()) + 5)
+        x1 = min(rgb.shape[1], int(xs.max()) + 5)
+        y1 = min(rgb.shape[0], int(ys.max()) + 5)
         if (x1 - x0) * (y1 - y0) < 0.93 * rgb.shape[0] * rgb.shape[1]:
             rgb = rgb[y0:y1, x0:x1].copy()
 
-    H, W = rgb.shape[:2]
-    rects, header, _line = detect_captions(rgb)
-    if header > 0:
-        rgb = rgb[header:, :].copy()
-        H, W = rgb.shape[:2]
-        rects = [(x, y - header, w, h) for x, y, w, h in rects]
+    # Название препарата сверху: чёрная строка над тканью.
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    H = gray.shape[0]
+    top = gray[: int(H * 0.22), :]
+    ink = ((top < 120) & (top > 0)).astype(np.uint8)
+    if ink.size and ink.mean() > 0.0005:
+        rows = np.where(ink.mean(axis=1) > 0.002)[0]
+        if len(rows):
+            bottom = int(rows.max()) + 5
+            if bottom < H * 0.25 and body[bottom:min(H, bottom + max(6, int(H * 0.06))), :].mean() > 0.10:
+                rgb = rgb[bottom:, :].copy()
+    return rgb
 
+
+def _get_ocr():
+    """Ленивая инициализация RapidOCR. None — если пакет недоступен."""
+    global _OCR
+    if _OCR is False:
+        return None
+    if _OCR is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            _OCR = RapidOCR()
+        except Exception as exc:                          # pragma: no cover
+            print(f"RapidOCR недоступен ({exc}); подписи не маскируются", file=sys.stderr)
+            _OCR = False
+            return None
+    return _OCR
+
+
+def _ocr_lines(rgb: np.ndarray, scales=(1.0, 1.4, 1.9, 2.6)) -> list[tuple[int, int, int, int]]:
+    """Строки подписей по данным OCR."""
+    ocr = _get_ocr()
+    if ocr is None:
+        return []
+    h, w = rgb.shape[:2]
+    found: list[tuple[int, int, int, int]] = []
+    for scale in scales:
+        im = rgb if abs(scale - 1) < 1e-3 else cv2.resize(
+            rgb, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+        try:
+            res, _ = ocr(im)
+        except Exception:
+            continue
+        for item in (res or []):
+            xs = [pt[0] / scale for pt in item[0]]
+            ys = [pt[1] / scale for pt in item[0]]
+            x0, y0, x1, y1 = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
+            if x1 - x0 >= 6 and y1 - y0 >= 5:
+                found.append((x0, y0, x1, y1))
+    uniq: list[tuple[int, int, int, int]] = []
+    for box in found:
+        for u in uniq:
+            inter = max(0, min(box[2], u[2]) - max(box[0], u[0])) * \
+                    max(0, min(box[3], u[3]) - max(box[1], u[1]))
+            area = (box[2] - box[0]) * (box[3] - box[1])
+            area_u = (u[2] - u[0]) * (u[3] - u[1])
+            if area and area_u and inter / min(area, area_u) > 0.45:
+                break
+        else:
+            uniq.append(box)
+    return uniq
+
+
+def _group_lines(lines, vgap: float = 0.8, hgap: float = 2.0):
+    """Склеивает строки одной подписи в блок. Возвращает [(блок, [строки])]."""
+    boxes = [[b[0], b[1], b[2], b[3], [tuple(b)]] for b in lines]
+    changed = True
+    while changed:
+        changed = False
+        out = []
+        for b in boxes:
+            for o in out:
+                bh = max(b[3] - b[1], o[3] - o[1])
+                vin = min(b[3], o[3]) - max(b[1], o[1])
+                hin = min(b[2], o[2]) - max(b[0], o[0])
+                if vin > -vgap * bh and hin > -hgap * bh:
+                    o[0], o[1] = min(o[0], b[0]), min(o[1], b[1])
+                    o[2], o[3] = max(o[2], b[2]), max(o[3], b[3])
+                    o[4].extend(b[4])
+                    changed = True
+                    break
+            else:
+                out.append(b)
+        boxes = out
+    return [((b[0], b[1], b[2], b[3]), b[4]) for b in boxes]
+
+
+def _protect_lines(gray: np.ndarray, minlen: int = 26) -> np.ndarray:
+    """Маска длинных тонких линий: стрелки, выноски, обводки."""
+    edges = cv2.Canny(gray, 60, 170)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    segs = cv2.HoughLinesP(edges, 1, np.pi / 360, threshold=14,
+                           minLineLength=minlen, maxLineGap=4)
+    prot = np.zeros_like(gray)
+    if segs is None:
+        return prot
+    for seg in segs.reshape(-1, 4):
+        x1, y1, x2, y2 = (int(v) for v in seg)
+        if math.hypot(x2 - x1, y2 - y1) < minlen:
+            continue
+        cv2.line(prot, (x1, y1), (x2, y2), 255, 2)
+    return cv2.dilate(prot, np.ones((3, 3), np.uint8), 1)
+
+
+def _grow_line(box, gray: np.ndarray, level: float):
+    """Расширяет бокс OCR до реальных границ строки.
+
+    OCR обрезает буквы по краям, поэтому подпись нельзя заливать по его
+    прямоугольнику. Идём влево/вправо, пока в полосе строки есть тёмные
+    пиксели; разрыв ограничен, чтобы не зацепить соседнюю подпись.
+    """
+    x0, y0, x1, y1 = box
+    H, W = gray.shape
+    h = max(6, y1 - y0)
+    sy0 = max(0, y0 - int(0.15 * h))
+    sy1 = min(H, y1 + int(0.15 * h) + 1)
+    band = gray[sy0:sy1].astype(np.float32)
+    dark = band < level
+    cols = dark.any(axis=0)
+    gap_max = max(5, int(1.0 * h))
+    room = int(3.0 * h)
+
+    def walk(pos, step):
+        gap = 0
+        for _ in range(room):
+            pos += step
+            if not (0 <= pos < W):
+                return min(max(pos, 0), W - 1)
+            if cols[pos]:
+                gap = 0
+            else:
+                gap += 1
+                if gap > gap_max:
+                    return pos - step * gap
+        return pos
+
+    gx0, gx1 = walk(x0, -1), walk(x1, 1)
+    # вертикальные границы — по тёмным пикселям расширенной полосы
+    win = gray[:, max(0, gx0):min(W, gx1)].astype(np.float32)
+    rows = np.where((win < level).any(axis=1))[0]
+    rows = rows[(rows >= max(0, y0 - h)) & (rows <= min(H - 1, y1 + h))]
+    if len(rows):
+        y0 = min(y0, int(rows.min()))
+        y1 = max(y1, int(rows.max()) + 1)
+    return int(max(0, gx0)), int(max(0, y0)), int(min(W, gx1)), int(min(H, y1))
+
+
+def _light_regions(rgb: np.ndarray) -> np.ndarray:
+    """Маска ровных светлых областей: белые выноски, плашки, поля слайда.
+
+    Отбираются только однородные компоненты (низкий разброс яркости) с высокой
+    медианой: бледная ткань и светло-голубой фон под слайдом сюда не попадают,
+    поэтому заливка по плашке не может испортить препарат.
+    """
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     ch = rgb.astype(np.int16)
     spread = ch.max(2) - ch.min(2)
-    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    ink = ((gray < 132) & (spread < 72)).astype(np.uint8) * 255
-    light = ((gray > 168) & (spread < 92)).astype(np.uint8) * 255
-
-    # Глобальный тон ткани для замазывания.
-    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-    tp = rgb[(hsv[:, :, 1] > 25) & (hsv[:, :, 2] > 45) & (hsv[:, :, 2] < 250)]
-    base = np.median(tp if len(tp) > 200 else rgb.reshape(-1, 3), axis=0).astype(np.float32)
-    blurred = cv2.GaussianBlur(rgb, (0, 0), 12)
-    fill = np.clip(blurred.astype(np.float32) * 0.5 + base * 0.5, 0, 255).astype(np.uint8)
-
-    mask = ink.copy()
-    n, labels, stats, _ = cv2.connectedComponentsWithStats(light, 8)
+    light = ((gray >= 208) & (spread <= 60)).astype(np.uint8) * 255
+    light = cv2.morphologyEx(light, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    filled = cv2.morphologyEx(
+        light, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (19, 19)))
+    filled = cv2.morphologyEx(
+        filled, cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(filled, 8)
+    H, W = gray.shape
+    keep = np.zeros_like(filled)
+    fallback = np.zeros_like(filled)
     for i in range(1, n):
-        x, y, w, h, area = stats[i]
-        if 140 <= area <= 18000 and 0.2 < w / h < 8 and w > 12 and h > 8:
-            sub = mask[y:y + h, x:x + w]
-            sub[labels[y:y + h, x:x + w] == i] = 255
-    # Рамки, найденные детектором, добавляем целиком.
-    for x, y, w, h in rects:
-        cv2.rectangle(mask, (max(0, x - 4), max(0, y - 4)),
-                      (min(W - 1, x + w + 4), min(H - 1, y + h + 4)), 255, -1)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-    mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=1)
+        area = int(stats[i, 4])
+        if area < 0.0006 * H * W:
+            continue
+        if int(stats[i, 2]) < 10 or int(stats[i, 3]) < 7:
+            continue
+        comp = lab == i
+        if float(np.median(gray[comp])) < 218:
+            continue
+        keep[comp] = 255
+    if not keep.any():
+        keep = light.copy()
+    return keep
 
+
+def _column_bg(roi: np.ndarray, ink: np.ndarray) -> np.ndarray:
+    """Фон подписи, оценённый по столбцам вокруг букв."""
+    bh, bw = ink.shape
+    bg = np.zeros((bh, bw, 3), np.float32)
+    for c in range(bw):
+        col = roi[:, c]
+        free = col[ink[:, c] == 0]
+        bg[:, c] = np.median(free if len(free) >= 3 else col, axis=0)
+    return bg
+
+
+def _erase_line(rgb: np.ndarray, box, prot: np.ndarray,
+                regions: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    """Стирает одну строку подписи по пикселям «чернил».
+
+    «Чернила» — это пиксели, которые заметно темнее локального фона и при этом
+    почти не окрашены: буквы подписей чёрные, а ткань препарата всегда
+    окрашена. Фон под стёртыми буквами восстанавливается inpaint'ом по
+    окружению, поэтому ни белых прямоугольников, ни швов не остаётся.
+    Длинные линии Хафа (стрелки, обводки) не затрагиваются.
+    """
+    H, W = rgb.shape[:2]
+    x0, y0, x1, y1 = box
+    X0, Y0 = max(0, x0 - 3), max(0, y0 - 3)
+    X1, Y1 = min(W, x1 + 5), min(H, y1 + 5)
+    if X1 - X0 < 8 or Y1 - Y0 < 6:
+        return None
+    roi = rgb[Y0:Y1, X0:X1]
+    gr = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
+    chroma = roi.astype(np.int16).max(2) - roi.astype(np.int16).min(2)
+    local = cv2.medianBlur(gr, 21).astype(np.float32)
+    ink = ((local - gr.astype(np.float32)) > 12) & (chroma <= 70)
+    ink = cv2.morphologyEx(ink.astype(np.uint8), cv2.MORPH_CLOSE,
+                           np.ones((2, 2), np.uint8))
+    # добираем ореол антиалиасинга вокруг уже найденных штрихов
+    ring = cv2.dilate(ink, np.ones((3, 3), np.uint8), iterations=1) > 0
+    halo = ring & (local - gr.astype(np.float32) > 5) & (chroma <= 70)
+    ink = (ink.astype(bool) | halo).astype(np.uint8)
+    band = np.zeros_like(ink)
+    band[max(0, y0 - Y0):min(Y1 - Y0, y1 - Y0),
+         max(0, x0 - X0):min(X1 - X0, x1 - X0)] = 1
+    ink &= band
+    ink[prot[Y0:Y1, X0:X1] > 0] = 0
+    # На светлой плашке буквы — это любые бесхромные пиксели, заметно темнее
+    # плашки. Так снимаются и наклонные штрихи, которые не дают «дыры» в фоне.
+    reg0 = regions[Y0:Y1, X0:X1] > 0
+    if float(reg0.mean()) > 0.55:
+        vals = roi[reg0].reshape(-1, 3)
+        plate0 = np.clip(np.median(vals, axis=0), 200, 255).astype(np.int16)
+        diff0 = np.abs(roi.astype(np.int16) - plate0).max(2)
+        ink = ink | ((diff0 > 10) & (chroma <= 40) & band).astype(np.uint8)
+    if ink.sum() < 12:
+        return None
+    ink = cv2.dilate(ink, np.ones((3, 3), np.uint8), iterations=1)
+    # восстановление фона: если подпись на светлой плашке, заливаем её цветом
+    # (inpaint на однородном фоне оставляет серые разводы), иначе — inpaint
+    reg = regions[Y0:Y1, X0:X1] > 0
+    if float(reg.mean()) > 0.55:
+        vals = roi[reg].reshape(-1, 3)
+        bright = vals[gr[reg] >= np.percentile(gr[reg], 70)]
+        plate = np.clip(np.median(bright if len(bright) >= 30 else vals, axis=0),
+                        200, 255).astype(np.uint8)
+        restored = np.broadcast_to(plate, roi.shape).copy()
+    else:
+        restored = cv2.inpaint(cv2.cvtColor(roi, cv2.COLOR_RGB2BGR), ink, 4,
+                               cv2.INPAINT_TELEA)[:, :, ::-1]
     out = rgb.copy()
-    out[mask > 0] = fill[mask > 0]
-    # Мягкий переход по краю замазанной области.
-    edge = cv2.GaussianBlur(mask, (0, 0), 2).astype(np.float32) / 255.0
-    soft = cv2.GaussianBlur(out, (0, 0), 2)
-    a = np.clip(edge * 0.45, 0, 1)[..., None]
-    return (out.astype(np.float32) * (1 - a) + soft.astype(np.float32) * a).astype(np.uint8)
+    sub = out[Y0:Y1, X0:X1]
+    sel = ink > 0
+    sub[sel] = restored[sel]
+    mask = np.zeros((H, W), np.uint8)
+    mask[Y0:Y1, X0:X1] = ink * 255
+    return out, mask
+
+
+def mask_captions(rgb: np.ndarray, passes: int = 2) -> np.ndarray:
+    """Стирает строго буквы подписей; стрелки, рамки и ткань не меняются."""
+    out = crop_slide(rgb).copy()
+    for _ in range(passes):
+        lines = _ocr_lines(out)
+        if not lines:
+            break
+        regions = _light_regions(out)
+        prot = _protect_lines(cv2.cvtColor(out, cv2.COLOR_RGB2GRAY))
+        changed = 0
+        for box in lines:
+            result = _erase_line(out, box, prot, regions)
+            if result is None:
+                continue
+            out, erased = result
+            changed += int(erased.sum() // 255)
+        if changed < 15:
+            break
+    return out
 
 
 def save_jpg(arr: np.ndarray, path: Path, max_side: int = 1100, quality: int = 83) -> None:
@@ -457,16 +693,7 @@ def main() -> int:
     hashes: dict[str, list[int]] = defaultdict(list)
     stats = defaultdict(int)
 
-    def mask_ok(arr: np.ndarray) -> bool:
-        g = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-        core = g[int(g.shape[0] * 0.12):int(g.shape[0] * 0.88),
-                 int(g.shape[1] * 0.12):int(g.shape[1] * 0.88)]
-        return float((core > 246).mean()) < 0.16
-
     def add_card(tag, pn, idx, rgb, gid, *, masked=False, has_labels=False, suffix=""):
-        if masked and not mask_ok(rgb):
-            stats["rejected"] += 1
-            return
         h = dhash(rgb)
         for old in hashes[gid]:
             if ham(h, old) <= 8:
