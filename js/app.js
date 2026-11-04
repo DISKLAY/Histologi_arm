@@ -427,7 +427,9 @@
         '<div class="feedback__head"><span class="dot">' + (ok ? '✓' : '×') + '</span>' + (ok ? 'Верно' : 'Неверно') + '</div>' +
         '<div class="feedback__answer">' + esc(g.title) + '</div>' +
         '<div class="feedback__chips"><span class="badge">' + esc(sys.title) + '</span> <span class="badge">' + esc(g.stain) + '</span>' + (g.number ? ' <span class="badge">№ ' + esc(g.number) + '</span>' : '') + '</div>' +
-        '<p class="feedback__desc" style="margin-top:10px">' + esc(g.hint) + '</p>' +
+        // Описание показываем целиком: раньше оно стояло одной строкой с
+        // многоточием от короткой подсказки, и разбор после ответа обрывался.
+        '<p class="feedback__desc" style="margin-top:10px">' + esc(descFor(g)) + '</p>' +
         '<div class="feedback__actions">' +
           (revealFor(card) ? '<button type="button" class="btn btn--sm" data-action="toggle-reveal">' + (revealed ? 'Скрыть подписи' : 'Показать подписанный снимок') + '</button>' : '') +
           '<button type="button" class="btn btn--sm" data-action="train-group" data-gid="' + esc(card.groupId) + '">Тренировать этот препарат</button>' +
@@ -435,7 +437,11 @@
         (revealed && revealFor(card) ? '<div class="reveal" data-action="zoom" data-src="' + esc(revealFor(card)) + '" data-cap="' + esc(g.title) + ' · подписанный слайд"><img src="' + esc(revealFor(card)) + '" alt="Подписанный вариант препарата">' +
           '<p class="reveal__cap"><span>С подписями — нажмите, чтобы увеличить</span><span class="badge">разбор</span></p></div>' : '') +
       '</div>' +
-      '<div class="quiz__bottom"><span class="muted" style="font-size:.8rem">' + esc(card.source) + '</span>' +
+      '<div class="quiz__bottom"><div class="quiz__bottom-nav">' +
+        // Кнопка «Назад» была только до ответа: после разбора вернуться к
+        // предыдущему вопросу было нечем, кроме клавиши ←.
+        (s.idx > 0 ? '<button type="button" class="btn btn--sm quiz__prev" data-action="prev" title="Вернуться к предыдущему вопросу (←)">← Назад</button>' : '') +
+        '<span class="muted" style="font-size:.8rem">' + esc(card.source) + '</span></div>' +
         '<button type="button" class="btn btn--primary" data-action="next">' + (s.idx + 1 >= s.ids.length ? 'Завершить →' : 'Следующий →') + '</button></div>';
     }
     right += '</section>';
@@ -760,9 +766,11 @@
         (wrong.length ? '<button type="button" class="btn" data-action="repeat-wrong">Повторить ошибки (' + wrong.length + ')</button>' : '') +
         '<a class="btn btn--ghost" href="#/atlas">В атлас</a>' +
       '</div>' +
-      '<div style="margin-top:22px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">' +
-        '<button type="button" class="btn btn--sm btn--ghost" data-action="prev">← К последнему вопросу</button>' +
-        '<button type="button" class="btn btn--sm btn--ghost" data-action="new-session">Новая настройка</button></div>' +
+      '<div class="session-done__more">' +
+        // «Новая настройка» была неприметной ghost-кнопкой, хотя нужна чаще
+        // всего: после итогов хочется просто начать новую тренировку.
+        '<button type="button" class="btn btn--primary" data-action="new-session">Новая тренировка</button>' +
+        '<button type="button" class="btn btn--sm btn--ghost" data-action="prev">← К последнему вопросу</button></div>' +
     '</div>';
   }
   function renderTrain() {
@@ -884,6 +892,15 @@
     return y.indexOf(x.slice(0, Math.min(80, x.length))) !== -1;
   }
   /* «Коротко» без обрыва: берём начало теории до последней целой фразы. */
+  /* Полное описание препарата для разбора после ответа. В манифесте лежит
+     подсказка (до 700 знаков) и теория (до 2600); для разбора годится теория,
+     но без служебной шапки вида «Препарат: … Окраска: …». */
+  function descFor(g) {
+    var t = String(g.theory || '').replace(/\s+/g, ' ').trim();
+    if (t.length < 80) t = String(g.hint || '').replace(/\s+/g, ' ').trim();
+    t = t.replace(/^(Общая характеристика|Описание|Строение)\s*:\s*/i, '');
+    return t;
+  }
   function shortHint(g) {
     var t = g.hintClue || '';
     if (t) return t;

@@ -530,8 +530,43 @@ def text_blocks(rgb: np.ndarray, min_paper: float = 0.45):
         # а не по каждой стороне, плюс запрет на блок «во весь кадр».
         if bw * bh > 0.2 * w * h or (bw > 0.85 * w and bh > 0.5 * h) or bh > 0.6 * h:
             continue
-        out.append((x, y, bw, bh))
+        # Блок упёрся в край кадра и уходит за него: это обрезанная рамка или
+        # список. Заливать его нельзя — от рамки останутся рожки над и под
+        # заплаткой. Признак считается здесь, а решает mask_captions.
+        clipped = x <= 1 or x + bw >= w - 1
+        out.append((x, y, bw, bh, clipped))
     return out
+
+
+def text_center(rgb: np.ndarray, x: int, y: int, bw: int, bh: int) -> np.ndarray | None:
+    """Полоска пикселей из середины блока — чтобы понять, буквы там или рамка."""
+    h, w = rgb.shape[:2]
+    cy0, cy1 = y + int(bh * 0.3), y + int(bh * 0.7) + 1
+    cx0, cx1 = max(0, x), min(w, x + bw)
+    if cx1 - cx0 < 4 or cy1 <= cy0:
+        return None
+    return rgb[max(0, cy0):min(h, cy1), cx0:cx1]
+
+
+def looks_like_text(patch: np.ndarray) -> bool:
+    """Внутри блока буквы или только линии рамки?
+
+    Подпись — это несколько коротких тёмных штрихов: у них много отдельных
+    компонент. У обрезанной рамки тёмное собрано в одну-две длинные линии,
+    поэтому почти всё приходится на самые крупные компоненты.
+    """
+    if patch is None or patch.size == 0:
+        return True
+    gray = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY)
+    dark = (gray < 110).astype(np.uint8)
+    total = int(dark.sum())
+    if total < 20:
+        return False                      # пусто: одна рамка или фон
+    n, _, stats, _ = cv2.connectedComponentsWithStats(dark, 8)
+    if n <= 2:
+        return False
+    areas = sorted((int(stats[i][4]) for i in range(1, n)), reverse=True)
+    return (sum(areas[:2]) / total) < 0.85
 
 
 def mask_captions(rgb: np.ndarray) -> np.ndarray:
@@ -545,16 +580,13 @@ def mask_captions(rgb: np.ndarray) -> np.ndarray:
     """
     out = crop_slide(rgb).copy()
     h, w = out.shape[:2]
-    for (x, y, bw, bh) in text_blocks(out):
+    for (x, y, bw, bh, clipped) in text_blocks(out):
+        # Обрезанный край кадра блок не трогаем только тогда, когда внутри
+        # рамка без букв: иначе подпись, прилипшая к краю, осталась бы открытой.
+        if clipped and not looks_like_text(text_center(out, x, y, bw, bh)):
+            continue
         x0, y0 = max(0, x - 4), max(0, y - 4)
         x1, y1 = min(w, x + bw + 4), min(h, y + bh + 4)
-        # Блок, у которого пропала часть рамки за краем кадра (слева или
-        # справа), — обрезанный список структур, а не подпись: заливка оставит
-        # от рамки рожки. Но обычная подпись тоже может прилипнуть к краю,
-        # поэтому пропускаем только явно срезанные блоки.
-        cut = max(0, 0 - x) + max(0, (x + bw) - w)
-        if cut > 12:
-            continue
         out[y0:y1, x0:x1] = 255
     head = header_block(out)
     if head:
@@ -674,12 +706,26 @@ def clean_text_snippet(text: str) -> str:
     Раньше обрезали до 230 знаков, но первые 100–150 обычно занимает название
     препарата с номером и окраской. После их удаления от описания оставался
     обрывок без единого целого предложения, и подсказка вырождалась.
+
+    Режем по границе предложения: в разборе подсказка показывается целиком, и
+    хвост «…Это простые неразветвленные трубчатые» читался как обрезанный
+    текст. Если до лимита не помещается ни одного предложения — режем по
+    запятой, иначе оставляем как есть.
     """
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(r"^\d+\.\s*", "", text)
     text = re.sub(r"^Общая характеристика:\s*", "", text, flags=re.I)
-    text = text[:HINT_CHARS].rstrip(" ,;:")
-    return text + ("…" if len(text) >= HINT_CHARS else "")
+    if len(text) <= HINT_CHARS:
+        return text
+    cut = text[:HINT_CHARS]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "), cut.rfind("… "))
+    if end > 120:
+        return cut[:end + 1].strip()
+    comma = cut.rfind(", ")
+    if comma > 120:
+        return cut[:comma].strip() + "."
+    sp = cut.rfind(" ")
+    return (cut[:sp] if sp > 0 else cut).rstrip(" ,;:—-") + "…"
 
 
 SERVICE_LINE = re.compile(r"^(Препарат|Окраска|Раздел)\b", re.I)

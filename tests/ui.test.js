@@ -606,3 +606,67 @@ print(json.dumps([p for p in pairs if p[2] + 3 < p[1]]))
   const bad = JSON.parse(out);
   assert.deepEqual(bad, [], 'у этих пар подписанный слайд отличается перестановкой каналов');
 });
+
+test('UI: после ответа видно полное описание и можно вернуться назад', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  visit(w, 'train');
+  w.document.querySelector('[data-action="start"]').click();
+  // Отвечаем на первый, переходим ко второму и отвечаем — теперь есть куда назад.
+  w.document.querySelector('.option').click();
+  w.document.querySelector('[data-action="next"]').click();
+  w.document.querySelector('.option').click();
+
+  const desc = w.document.querySelector('.feedback__desc');
+  assert.ok(desc, 'после ответа нет описания');
+  const text = desc.textContent.trim();
+  assert.ok(text.length > 300, 'описание обрезано: ' + text.length + ' знаков');
+  assert.ok(!/…\s*$/.test(text), 'описание кончается многоточием');
+  assert.ok(!/\s[а-яё]{1,3}$/i.test(text), 'описание обрывается на полуслове');
+
+  const back = w.document.querySelector('.quiz__bottom [data-action="prev"]');
+  assert.ok(back, 'после ответа нет кнопки «Назад» — вернуться к прошлому вопросу нечем');
+  back.click();
+  assert.match(w.document.querySelector('.quiz__count').textContent, /^Вопрос 1 из /, 'назад не сработала');
+});
+
+test('UI: на итогах заметная кнопка «Новая тренировка»', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  visit(w, 'train');
+  w.document.querySelector('[data-action="start"]').click();
+  let guard = 0;
+  while (!w.document.querySelector('.session-done') && guard++ < 80) {
+    if (w.document.querySelector('.option')) w.document.querySelector('.option').click();
+    const n = w.document.querySelector('[data-action="next"]');
+    if (n) n.click();
+  }
+  assert.ok(w.document.querySelector('.session-done'), 'сессия не завершилась');
+  const more = w.document.querySelector('.session-done__more');
+  assert.ok(more, 'нет блока кнопок под итогами');
+  const main = more.querySelector('.btn--primary');
+  assert.ok(main, 'нет главной кнопки');
+  assert.equal(main.getAttribute('data-action'), 'new-session');
+  assert.match(main.textContent, /Новая тренировка/, 'кнопка должна называться «Новая тренировка»');
+  main.click();
+  assert.ok(w.document.querySelector('[data-action="start"]'), 'по кнопке не открылись настройки тренировки');
+});
+
+test('Данные: подсказки не обрываются на полуслове', () => {
+  const { execFileSync } = require('node:child_process');
+  const script = `
+import json, re
+src = open('js/data/preparations.js', encoding='utf-8').read()
+data = json.loads(src.split('window.HISTO_DATA =', 1)[1].rstrip().rstrip(';'))
+bad = []
+for g in data['groups']:
+    h = (g.get('hint') or '').strip()
+    if not h:
+        bad.append([g['id'], 'пусто'])
+    elif not re.search(r'[.!?…]["»]?$', h):
+        bad.append([g['id'], h[-40:]])
+print(json.dumps(bad, ensure_ascii=False))
+`;
+  let out;
+  try { out = execFileSync('python3', ['-c', script], { cwd: ROOT, encoding: 'utf8' }); }
+  catch (e) { return; }
+  assert.deepEqual(JSON.parse(out), [], 'эти подсказки обрываются на полуслове');
+});

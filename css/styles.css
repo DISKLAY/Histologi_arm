@@ -265,13 +265,16 @@ img, svg { display: block; }
 .feedback.is-ok .dot { background: var(--ok); }
 .feedback.is-bad .dot { background: var(--bad); }
 .feedback__answer { font-size: 1rem; font-weight: 700; margin: 4px 0 8px; }
-.feedback__desc { font-size: .85rem; color: var(--text-2); }
+.feedback__desc { font-size: .85rem; color: var(--text-2); line-height: 1.55; white-space: pre-line; overflow-wrap: anywhere; }
 .feedback__chips { margin-top: 10px; }
 .feedback__actions { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
 .reveal { margin-top: 14px; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; background: var(--surface-3); cursor: zoom-in; }
 .reveal img { display: block; width: 100%; max-height: 34vh; object-fit: contain; margin: 0 auto; }
 .reveal__cap { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; font-size: .76rem; color: var(--muted); border-top: 1px solid var(--border); background: var(--surface); }
 .quiz__bottom { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.quiz__bottom-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+/* Итоги сессии: «Новая тренировка» — главное действие, остальное тише. */
+.session-done__more { margin-top: 22px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; align-items: center; }
 .kbd { display: inline-block; min-width: 19px; padding: 1px 5px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface); font: .72rem/1.4 var(--font); text-align: center; color: var(--muted); }
 .session-done { text-align: center; padding: 34px 20px; }
 .session-done__ring { width: 108px; height: 108px; margin: 0 auto 18px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--primary) var(--p, 0%), var(--surface-3) 0); position: relative; }
