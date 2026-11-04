@@ -136,7 +136,13 @@
   function card() { return cards[st.idx]; }
 
   function buildOrder(c) {
-    return c.labels.map(function (_, i) { return i; }).sort(function (a, b) {
+    var idx = c.labels.map(function (_, i) { return i; });
+    if (st.mode === 'point') {
+      // «покажи, где структура» — спрашиваем только те подписи, у которых
+      // есть кончик стрелки: без него на снимке нечего нажимать
+      idx = idx.filter(function (i) { return c.labels[i].tips && c.labels[i].tips.length; });
+    }
+    return idx.sort(function (a, b) {
       var A = c.labels[a].b, B = c.labels[b].b;
       var ay = (A[1] + A[3]) / 2, by = (B[1] + B[3]) / 2;
       if (Math.abs(ay - by) > c.h * 0.06) return ay - by;
@@ -253,7 +259,7 @@
   }
 
   function paint() {
-    var c = card(), total = c.labels.length, n = doneCount();
+    var c = card(), total = st.order.length, n = doneCount();
     if (st.results) {
       $('counter').innerHTML = 'Разбор <b>' + (st.cur + 1) + '</b> из ' + total;
     } else {
@@ -363,14 +369,15 @@
 
   function verdict() {
     var c = card(), full = 0, half = 0;
-    c.labels.forEach(function (_, i) {
+    st.order.forEach(function (i) {
       var r = st.results[i];
       if (r.kind === 'ok') full++;
       else if (r.kind === 'near') half++;
     });
-    var total = c.labels.length;
+    var total = st.order.length;
     var pct = Math.round(((full + half * 0.5) / total) * 100);
-    var rows = c.labels.map(function (l, i) {
+    var rows = st.order.map(function (i) {
+      var l = c.labels[i];
       var r = st.results[i];
       var mark = r.kind === 'ok' ? '✓' : r.kind === 'near' ? '±' : '✕';
       var tag = r.kind === 'ok' ? '<span class="tag ok">верно</span>'

@@ -48,7 +48,7 @@ from build_assets import GROUPS, PDF_FILES, TAGS, SLIDE_OFFSET  # noqa: E402
 HEADER = re.compile(r"^(Препарат|Окраска|https?://|Раздел)", re.I)
 DIGITS = re.compile(r"^\d{1,2}$")
 JUNK = re.compile(r"^[•\-–—\s]+$")
-BAD_HEAD = re.compile(r"^(\d{1,2}\.\s|Препарат|Окраска|•|https?://|-cortex)", re.I)
+BAD_HEAD = re.compile(r"^(\d{1,2}\.\s|Препарат|Окраска|•|https?://|-|\W*picture-id)", re.I)
 SCALE = 1.7           # масштаб рендера «ответного» снимка
 PAD = 8               # поля вокруг области интереса, пункты
 
@@ -149,37 +149,181 @@ def group_lines(lines: list[dict]) -> list[dict]:
 def usable_label(text: str) -> bool:
     """Отсев прозы и мусора: подпись — это короткое название структуры."""
     t = text.strip()
-    if not (4 <= len(t) <= 55):
+    if not (4 <= len(t) <= 70):
         return False
     if BAD_HEAD.match(t) or t.count("•") or "  " in t:
         return False
+    if "picture-id" in t.lower() or "shutterstock" in t.lower():
+        return False
     if re.search(r"[.:;]$", t) and len(t) > 25:
         return False
-    if len(t.split()) > 6:
+    # Названия бывают длинными: «Тонкие и толстые отделы петли юкстамедулярного
+    # нефрона» — 8 слов. Отсекаем не по длине, а по признакам прозы.
+    if len(t.split()) > 9:
         return False
     return bool(re.search(r"[А-Яа-яЁё]", t))
 
 
 # ---------------------------------------------------------------- стрелки
 
-def content_bbox(page: pymupdf.Page) -> pymupdf.Rect:
-    """Рамка, в которой лежат фотографии препарата (кончик не должен вылезать за неё)."""
+def content_bbox(page: pymupdf.Page) -> pymupdf.Rect | None:
+    """Рамка, в которой лежат фотографии препарата (кончик не должен вылезать за неё).
+
+    None, если фотографии на странице нет: слайды с одним текстом
+    («Общая характеристика:», списки структур) препаратами не являются.
+    """
     rects = []
     for im in page.get_images(full=True):
         for r in page.get_image_rects(im[0]):
-            if r.width > 25 and r.height > 25:
+            if r.width > 8 and r.height > 8:
                 rects.append(r)
     if not rects:
-        return page.rect
-    return pymupdf.Rect(min(r.x0 for r in rects), min(r.y0 for r in rects),
-                        max(r.x1 for r in rects), max(r.y1 for r in rects))
+        return None
+    box = pymupdf.Rect(min(r.x0 for r in rects), min(r.y0 for r in rects),
+                       max(r.x1 for r in rects), max(r.y1 for r in rects))
+    # снимок может быть нарезан на горизонтальные полосы — вместе они
+    # занимают заметную часть страницы, а одиночная иконка нет
+    if box.get_area() < 0.06 * page.rect.get_area():
+        return None
+    return box
 
 
-def detect(page: pymupdf.Page) -> tuple[list[dict], pymupdf.Rect]:
-    """Возвращает подписи с облачками и кончиками стрелок."""
-    all_labels = [l for l in group_lines(raw_lines(page)) if usable_label(l["t"])]
-    page_area = page.rect.get_area()
+def slide_title(lines: list[dict]) -> str | None:
+    """Название препарата из шапки: «Препарат №90 «Мозжечок»» → «Мозжечок»."""
+    for i, line in enumerate(lines):
+        if not re.match(r"^(Препарат|\d{1,2}\.\s)", line["t"]):
+            continue
+        m = re.search(r"«([^»]{3,40})»", line["t"])
+        if m:
+            return m.group(1).strip()
+        # название стоит следующей строкой: «Препарат №90» / «Мозжечок»
+        for nxt in lines[i + 1:i + 3]:
+            m = re.fullmatch(r"«([^»]{3,40})»", nxt["t"].strip())
+            if m:
+                return m.group(1).strip()
+    return None
+
+
+def header_blocks(page: pymupdf.Page) -> list[pymupdf.Rect]:
+    """Плашки шапки слайда: кремовый фон и синяя рамка блока «Окраска»."""
+    blocks = []
+    for d in page.get_drawings():
+        r = d["rect"]
+        if max(r.width, r.height) > 320:
+            continue
+        fill = d.get("fill")
+        if fill is None:
+            continue
+        # кремовый фон шапки (0.99, 0.92, 0.86) или синяя рамка (0, 0, 1)
+        cream = fill[0] > 0.9 and 0.8 < fill[1] < 0.97 and fill[2] < 0.95
+        blue = fill[2] > 0.9 and fill[0] < 0.2 and fill[1] < 0.2
+        if not (cream or blue):
+            continue
+        if r.width < 80 or r.height < 12:
+            continue
+        blocks.append(r)
+    return blocks
+
+
+def drop_page_header(all_labels: list[dict], page: pymupdf.Page,
+                     cb: pymupdf.Rect, title: str | None = None) -> list[dict]:
+    """Убирает шапку страницы: «Препарат №90», «Мозжечок», «Окраска: …».
+
+    Шапка набрана в собственном блоке над снимком и подсвечена кремовой
+    или синей рамкой. Подпись структуры либо закрыта белой плашкой-облачком,
+    либо лежит на самом снимке. Поэтому выбрасываем только текст, который
+    попал в такой блок, — подписи над снимком («Молекулярный слой» на 0113-001)
+    и подписи сбоку («Капсула почки» на 0331-015) остаются.
+    """
+    blocks = header_blocks(page)
+    header = pymupdf.Rect()
+    for r in blocks:
+        header |= r
+    out = []
+    for lab in all_labels:
+        r = lab["r"]
+        if not usable_label(lab["t"]):
+            continue          # проза, нумерация и водяные знаки стоков
+        if title and re.sub(r"\W", "", lab["t"].lower()) == re.sub(r"\W", "", title.lower()):
+            continue          # заголовок препарата, а не подпись структуры
+        if not header.is_empty:
+            inter = r & header
+            if not inter.is_empty and inter.get_area() >= 0.5 * r.get_area():
+                continue      # внутри блока-шапки, а не подпись структуры
+        out.append(lab)
+    return out
+
+
+def outside(rect: pymupdf.Rect, photo: pymupdf.Rect) -> list[pymupdf.Rect]:
+    """Части `rect`, не закрытые снимком.
+
+    Шапка слайда нередко лежит под фотографией: виден только её краешек
+    на поле страницы. Заливать белым поверх снимка нельзя — на препарате
+    остаются полосы, поэтому стираем только то, что видно.
+    """
+    inter = rect & photo
+    if inter.is_empty:
+        return [rect]
+    out = []
+    if rect.x0 < inter.x0:
+        out.append(pymupdf.Rect(rect.x0, rect.y0, inter.x0, rect.y1))
+    if rect.x1 > inter.x1:
+        out.append(pymupdf.Rect(inter.x1, rect.y0, rect.x1, rect.y1))
+    if rect.y0 < inter.y0:
+        out.append(pymupdf.Rect(inter.x0, rect.y0, inter.x1, inter.y0))
+    if rect.y1 > inter.y1:
+        out.append(pymupdf.Rect(inter.x0, inter.y1, inter.x1, rect.y1))
+    return out
+
+
+def service_rects(page: pymupdf.Page, cb: pymupdf.Rect,
+                  all_labels: list[dict], title: str | None) -> list[pymupdf.Rect]:
+    """Рамки служебного текста слайда: «Препарат №91», «Окраска: …», название.
+
+    Это не подписи структур, но в кадре-вопросе они выдают ответ и мешают
+    смотреть препарат. Служебным считаем текст, который не стал подписью
+    структуры и при этом похож на шапку: начинается с «Препарат»/«Окраска»,
+    совпадает с названием препарата или не проходит фильтр подписей.
+    """
+    taken = [lab["r"] for lab in all_labels]
+    norm_title = re.sub(r"\W", "", title.lower()) if title else None
+    lines = raw_lines(page)
+    out = []
+    for i, line in enumerate(lines):
+        r, t = line["r"], line["t"].strip()
+        if any((r & q).get_area() > 0.3 * r.get_area() for q in taken):
+            continue                      # это подпись структуры
+        if r.get_area() < 1:
+            continue
+        header = bool(HEADER.match(t) or DIGITS.match(t) or JUNK.match(t))
+        is_title = bool(norm_title and re.sub(r"\W", "", t.lower()) == norm_title)
+        if header or is_title or not usable_label(t):
+            out.append(r)
+        # «Окраска:» набрана отдельной строкой, а сам краситель — следующей:
+        # стираем и её, иначе в кадре-вопросе остаётся «гематоксилин-эозин».
+        if header and t.rstrip().endswith(":"):
+            for nxt in lines[i + 1:i + 2]:
+                nr = nxt["r"]
+                if -2 <= nr.y0 - r.y1 <= 24 and abs(nr.x0 - r.x0) < 60:
+                    if not any((nr & q).get_area() > 0.3 * nr.get_area() for q in taken):
+                        out.append(nr)
+    out.extend(header_blocks(page))
+    return out
+
+
+def detect(page: pymupdf.Page) -> tuple[list[dict], list[dict], pymupdf.Rect]:
+    """Возвращает (все подписи кадра, подписи с кончиками, рамку фото).
+
+    В `all_labels` попадают только настоящие названия структур: шапка
+    страницы («Препарат №90», «Мозжечок», «Окраска: …») лежит вне снимка
+    и отбрасывается — иначе она превращается в вопросы без стрелок.
+    """
     cb = content_bbox(page)
+    if cb is None:
+        return [], [], None
+    lines = raw_lines(page)
+    all_labels = drop_page_header(group_lines(lines), page, cb, slide_title(lines))
+    page_area = page.rect.get_area()
 
     whites = []
     for d in page.get_drawings():
@@ -193,6 +337,11 @@ def detect(page: pymupdf.Page) -> tuple[list[dict], pymupdf.Rect]:
     def near_edge(p, bubble) -> bool:
         return _dist(p, bubble) < 3.5
 
+    # Облачко — белая заливка вокруг подписи. Порог не 100 %, потому что
+    # часть названий выходит за свою плашку: «Дендрит грушевидного нейрона»
+    # лежит выше заливки и покрыт ею только на 11 %. Поэтому берём заливку
+    # с наибольшей долей покрытия текста, а если такой нет вовсе —
+    # опорой становится сам текст подписи.
     items = []
     for lab in all_labels:
         best = None
@@ -200,13 +349,17 @@ def detect(page: pymupdf.Page) -> tuple[list[dict], pymupdf.Rect]:
             inter = w["rect"] & lab["r"]
             if inter.is_empty:
                 continue
-            if inter.get_area() / max(1.0, lab["r"].get_area()) < 0.6:
+            share = inter.get_area() / max(1.0, lab["r"].get_area())
+            if share < 0.25:
                 continue
+            # приоритет — «тесность» плашки: большие белые поля тоже
+            # покрывают текст, но от них не найти кончик
             compact = lab["r"].get_area() / w["rect"].get_area()
-            if best is None or compact > best[0]:
-                best = (compact, w)
-        if best:
-            items.append({"label": lab, "bubble": best[1]["rect"], "tips": []})
+            score = (compact,)
+            if best is None or score > best[0]:
+                best = (score, w)
+        bubble = best[1]["rect"] if best else lab["r"] + (-4, -4, 4, 4)
+        items.append({"label": lab, "bubble": bubble, "tips": [], "anchored": bool(best)})
 
     # Кончик ищем как самую дальнюю от центра подписи точку белых фигур,
     # которые примыкают к облачку. Именно от центра текста, а не от рамки:
@@ -221,9 +374,14 @@ def detect(page: pymupdf.Page) -> tuple[list[dict], pymupdf.Rect]:
             return False
         return True
 
+    bubbles = [it["bubble"] for it in items]
     for it in items:
         lr, br = it["label"]["r"], it["bubble"]
         cx, cy = (lr.x0 + lr.x1) / 2, (lr.y0 + lr.y1) / 2
+        # Соседние облачка стоят вплотную, и угол чужой плашки может
+        # оказаться «кончиком» этой подписи. Такие точки отбрасываем: они
+        # лежат на чужой заливке, а не на хвосте стрелки.
+        foreign = [b + (-3, -3, 3, 3) for b in bubbles if b != br]
         cand = []
         for w in whites:
             if not w["pts"]:
@@ -231,6 +389,11 @@ def detect(page: pymupdf.Page) -> tuple[list[dict], pymupdf.Rect]:
             # фигура должна примыкать к облачку или к подписи
             if min(min(_dist(p, br), _dist(p, lr)) for p in w["pts"]) > 6:
                 continue
+            ok_pts = [p for p in w["pts"]
+                      if not any(f.contains(pymupdf.Point(p)) for f in foreign)]
+            if not ok_pts:
+                continue
+            w = {"rect": w["rect"], "pts": ok_pts}
             # точка должна быть заметно дальше самого облачка, иначе метка
             # садится на его край и «указывает» в пустоту
             reach = min(br.width, br.height) * 0.6 + 14
@@ -251,6 +414,7 @@ def detect(page: pymupdf.Page) -> tuple[list[dict], pymupdf.Rect]:
                 continue
             merged.append((dmax, p))
         it["tips"] = merged[:2]
+
     return all_labels, items, cb
 
 
@@ -318,6 +482,9 @@ def main() -> int:
             continue
         page = doc[pn - 1]
         all_labels, items, cb = detect(page)
+        if cb is None:
+            stats["без снимка"] += 1
+            continue
         if not items:
             stats["без векторных подписей"] += 1
             continue
@@ -330,8 +497,13 @@ def main() -> int:
             continue
 
         cid = f"{tag}-{pn:03d}"
+        # В кадре-вопросе гасим и служебный текст слайда: номер препарата,
+        # название, строку окраски. Это не подписи структур, но если их
+        # оставить, они выдают ответ и мешают смотреть препарат.
+        service = [q for r in service_rects(page, cb, all_labels, slide_title(raw_lines(page)))
+                   for q in outside(r, cb)]
         answered = render_page(page, clip, [])
-        asked = render_page(page, clip, [l["r"] for l in all_labels])
+        asked = render_page(page, clip, [l["r"] for l in all_labels] + service)
         answered.save(img_dir / f"{cid}-a.jpg", "JPEG", quality=84, optimize=True)
         asked.save(img_dir / f"{cid}-q.jpg", "JPEG", quality=84, optimize=True)
 

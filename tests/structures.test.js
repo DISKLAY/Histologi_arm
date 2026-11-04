@@ -96,3 +96,43 @@ test('Структуры: демо ссылается на существующ�
   });
   assert.deepEqual(missing, [], 'демо ссылается на отсутствующие файлы');
 });
+
+test('Структуры: каждая подпись кадра становится вопросом', () => {
+  // Регресс, который заметил пользователь: на 0113-001 было 9 подписей,
+  // а вопросов — 6. Причина — подписи без белого облачка выбрасывались.
+  // Теперь вопрос строится по подписи, а не по найденной стрелке.
+  const cards = load();
+  const bad = [];
+  cards.forEach(c => {
+    const nLab = c.labels.length;
+    const nQ = c.labels.filter(l => l.text && l.text.trim()).length;
+    if (nQ !== nLab) bad.push(c.id + ': подписей ' + nLab + ', вопросов ' + nQ);
+  });
+  assert.deepEqual(bad, [], bad.join('\n'));
+  const single = cards.find(c => c.id === '0113-001');
+  assert.ok(single, 'нет карточки 0113-001');
+  assert.equal(single.labels.length, 9, 'на 0113-001 должно остаться 9 подписей');
+});
+
+test('Структуры: в вопросы не попадают шапка слайда и водяные знаки', () => {
+  const cards = load();
+  const bad = [];
+  const junk = [/^\s*Препарат/i, /^\s*Окраска/i, /picture-id/i, /shutterstock/i,
+                /^\s*«?Мозжечок»?\s*$/i, /гематоксин/i];
+  cards.forEach(c => {
+    c.labels.forEach(l => {
+      junk.forEach(re => { if (re.test(l.text)) bad.push(c.id + ': «' + l.text + '»'); });
+    });
+  });
+  assert.deepEqual(bad, [], 'вопросы из шапки: ' + bad.join('; '));
+});
+
+test('Структуры: демо спрашивает все подписи, а в режиме «покажи» — только с кончиком', () => {
+  const demo = path.join(ROOT, 'demo', 'demo.js');
+  if (!fs.existsSync(demo)) return;
+  const src = fs.readFileSync(demo, 'utf8');
+  const order = src.slice(src.indexOf('function buildOrder'), src.indexOf('function renderPicker'));
+  assert.ok(/labels\.map/.test(order), 'порядок вопросов должен строиться по всем подписям');
+  assert.ok(/tips/.test(order), 'в режиме «покажи» нужен фильтр по кончикам');
+  assert.ok(/st\.order\.length/.test(src), 'счётчик вопросов должен идти по st.order');
+});
