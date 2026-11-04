@@ -139,7 +139,9 @@ img, svg { display: block; }
 [data-theme="dark"] .icon--sun { display: none; }
 .menu-toggle { display: none; align-items: center; gap: 7px; margin-left: auto; padding: 8px 12px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-full); font-size: .86rem; font-weight: 600; }
 .menu-toggle svg { width: 18px; height: 18px; }
-.mobile-nav { display: none; border-bottom: 1px solid var(--border); background: var(--surface); padding: 10px 18px 14px; }
+/* Панель меню живёт внутри липкой шапки: раскрывается там, где сейчас виден
+   экран, а не в начале документа. Высокий список прокручивается сам. */
+.mobile-nav { display: none; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--surface); padding: 10px 18px 14px; max-height: calc(100vh - 60px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .mobile-nav nav { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .mobile-nav a { padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); font-size: .9rem; font-weight: 560; }
 .mobile-nav a.is-active { background: var(--primary-soft); color: var(--primary-strong); }

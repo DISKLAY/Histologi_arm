@@ -689,3 +689,24 @@ test('UI: в галерее атласа нет повторов одного и
   });
   assert.deepEqual(bad, [], 'в этих группах атлас показывает один снимок дважды');
 });
+
+test('UI: меню раскрывается в шапке и видно в любой точке прокрутки', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  const nav = w.document.getElementById('mobileNav');
+  assert.ok(nav, 'нет панели меню');
+  // Панель внутри липкой шапки: иначе при прокрутке она остаётся наверху
+  // документа и кнопка «Меню» открывает что-то за пределами экрана.
+  assert.equal(nav.closest('header'), w.document.querySelector('header.topbar'),
+    'меню должно лежать внутри липкой шапки');
+  const css = fs.readFileSync(path.join(ROOT, 'css/styles.css'), 'utf8');
+  assert.match(css, /\.topbar\s*\{[^}]*position:\s*sticky/, 'шапка не липкая — меню снова уедет наверх');
+  assert.match(css, /\.mobile-nav\s*\{[^}]*overflow-y:\s*auto/, 'высокое меню не прокручивается');
+  // Кнопка открывает и закрывает панель.
+  const toggle = w.document.getElementById('menuToggle');
+  assert.equal(nav.hidden, true);
+  toggle.click();
+  assert.equal(nav.hidden, false, 'меню не открылось');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  toggle.click();
+  assert.equal(nav.hidden, true, 'меню не закрылось');
+});
