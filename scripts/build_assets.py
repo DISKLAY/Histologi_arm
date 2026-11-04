@@ -523,9 +523,12 @@ def text_blocks(rgb: np.ndarray, min_paper: float = 0.45):
         x, y, bw, bh, area = (int(v) for v in st2[i])
         if bw < 24 or bh < 10 or area < 200:
             continue
-        # Блок не должен накрыть весь снимок целиком: легенда со списком
-        # структур бывает крупной, поэтому запас большой.
-        if bw > 0.75 * w or bh > 0.75 * h:
+        # Блок не должен накрыть весь снимок целиком: подпись под снимком
+        # бывает широкой и низкой, а вертикальный список структур — высоким.
+        # Раньше отсекалось всё шире 75% кадра, и у роговицы под цифрами
+        # оставалась подпись во всю ширину; теперь ограничение по площади,
+        # а не по каждой стороне, плюс запрет на блок «во весь кадр».
+        if bw * bh > 0.2 * w * h or (bw > 0.85 * w and bh > 0.5 * h) or bh > 0.6 * h:
             continue
         out.append((x, y, bw, bh))
     return out
@@ -545,6 +548,13 @@ def mask_captions(rgb: np.ndarray) -> np.ndarray:
     for (x, y, bw, bh) in text_blocks(out):
         x0, y0 = max(0, x - 4), max(0, y - 4)
         x1, y1 = min(w, x + bw + 4), min(h, y + bh + 4)
+        # Блок, у которого пропала часть рамки за краем кадра (слева или
+        # справа), — обрезанный список структур, а не подпись: заливка оставит
+        # от рамки рожки. Но обычная подпись тоже может прилипнуть к краю,
+        # поэтому пропускаем только явно срезанные блоки.
+        cut = max(0, 0 - x) + max(0, (x + bw) - w)
+        if cut > 12:
+            continue
         out[y0:y1, x0:x1] = 255
     head = header_block(out)
     if head:
@@ -573,8 +583,10 @@ def render_reveal(page: pymupdf.Page, path: Path, frame=None, others=()) -> bool
     картинок той же страницы.
     """
     pix = page.get_pixmap(matrix=pymupdf.Matrix(1.4, 1.4), alpha=False)
-    arr = np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width, 3)
-    rgb = arr[:, :, ::-1].copy()
+    # samples у PyMuPDF уже в RGB: раньше здесь стоял arr[:, :, ::-1], и красный
+    # с синим менялись местами — подписанные слайды выглядели холоднее и
+    # сиреневее, чем тот же кадр в чистых снимках.
+    rgb = np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width, 3).copy()
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     scale = 1.4
     H, W = gray.shape

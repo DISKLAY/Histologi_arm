@@ -581,3 +581,28 @@ test('UI: на узком окне «По разделам» перестраи�
   assert.match(css, /\.table__sm\s*\{\s*display:\s*flex/, 'запасные строки не показываются на узком окне');
   assert.match(css, /\.table__sm\s*\{\s*display:\s*none/, 'запасные строки видны и на широком экране');
 });
+
+test('Данные: подписанный слайд в тех же цветах, что и чистый кадр', () => {
+  // Раньше render_reveal переворачивал каналы (arr[:, :, ::-1]), и подписанные
+  // слайды выглядели сиреневее чистых. Проверяем по сохранённым файлам.
+  const { execFileSync } = require('node:child_process');
+  const script = `
+import json, glob, os
+import numpy as np
+from PIL import Image
+pairs = []
+for f in sorted(glob.glob('assets/reveal/*.jpg')):
+    b = os.path.basename(f); p = 'assets/prep/' + b
+    if not os.path.exists(p): continue
+    r = np.array(Image.open(f).convert('RGB')).reshape(-1, 3).mean(0)
+    q = np.array(Image.open(p).convert('RGB')).reshape(-1, 3).mean(0)
+    dn = float(np.abs(r - q).mean()); ds = float(np.abs(r - q[::-1]).mean())
+    pairs.append((b, dn, ds))
+print(json.dumps([p for p in pairs if p[2] + 3 < p[1]]))
+`;
+  let out;
+  try { out = execFileSync('python3', ['-c', script], { cwd: ROOT, encoding: 'utf8' }); }
+  catch (e) { return; }   // нет python/Pillow — проверка необязательная
+  const bad = JSON.parse(out);
+  assert.deepEqual(bad, [], 'у этих пар подписанный слайд отличается перестановкой каналов');
+});
