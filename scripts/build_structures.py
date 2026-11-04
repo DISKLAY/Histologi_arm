@@ -307,7 +307,10 @@ def service_rects(page: pymupdf.Page, cb: pymupdf.Rect,
                 if -2 <= nr.y0 - r.y1 <= 24 and abs(nr.x0 - r.x0) < 60:
                     if not any((nr & q).get_area() > 0.3 * nr.get_area() for q in taken):
                         out.append(nr)
-    out.extend(header_blocks(page))
+    # Кремовая плашка шапки тоже выдаёт ответ: внутри «Препарат №91 «Мозжечок»».
+    # Заливаем и её, но только снаружи снимка — поверх препарата нельзя.
+    for r in header_blocks(page):
+        out.append(r)
     return out
 
 

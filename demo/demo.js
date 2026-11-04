@@ -150,11 +150,13 @@
     });
   }
 
+  // В селекторе снимков не должно быть названия препарата и окраски: это
+  // готовый ответ на вопрос «что за препарат». Показываем только номер
+  // снимка в наборе.
   function renderPicker() {
     $('picker').innerHTML = cards.map(function (c, i) {
-      var t = c.title.replace(/\s*\(.*?\)\s*/g, '').trim();
       return '<button class="pick" data-i="' + i + '" aria-pressed="' + (i === st.idx) + '">' +
-        esc(t) + ' <span class="n">слайд ' + c.slide + '</span></button>';
+        'снимок ' + (i + 1) + ' <span class="n">' + c.labels.length + ' стр.</span></button>';
     }).join('');
   }
 
@@ -168,11 +170,10 @@
     st.answered = {};
     st.picked = null;
     $('pic').src = c.q;
-    $('pic').alt = c.title;
-    $('cardTitle').textContent = c.title;
-    $('cardSub').textContent = [(c.num ? '№ ' + c.num : ''), c.stain, 'слайд ' + c.slide,
-      c.labels.length + ' ' + plural(c.labels.length, 'структура', 'структуры', 'структур')]
-      .filter(Boolean).join(' · ');
+    $('pic').alt = 'Микропрепарат без подписей';
+    $('cardTitle').textContent = 'Снимок без подписей';
+    $('cardSub').textContent = [c.labels.length + ' ' +
+      plural(c.labels.length, 'структура', 'структуры', 'структур')].join('');
     $('verdict').hidden = true;
     $('verdict').innerHTML = '';
     $('stamp').textContent = '';

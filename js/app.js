@@ -111,6 +111,14 @@
     try { return new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
     catch (e) { return ''; }
   }
+  /* Подпись к снимку до ответа. «Слайд 113» — это тот же номер препарата:
+     по нему легко найти подпись в атласе, поэтому в вопросе его нет. */
+  function slotLabel(card) {
+    var idx = state.session ? state.session.ids.indexOf(card.id) : -1;
+    return 'Снимок ' + (idx >= 0 ? idx + 1 : 1) + ' из ' +
+      (state.session ? state.session.ids.length : 1);
+  }
+
   function badge(g) {
     var s = systemById[g.system];
     return '<span class="badge">' + (g.number ? '№ ' + esc(g.number) : esc(s ? s.title : '')) + '</span>';
@@ -377,13 +385,15 @@
     var p = prog(card.id);
 
     var media = '<section class="card quiz__media">' +
-      '<div class="quiz__imgwrap" data-action="zoom" data-src="' + esc(card.clean) + '" data-cap="' + esc(g.title) + ' · ' + esc(card.source) + '">' +
+      '<div class="quiz__imgwrap" data-action="zoom" data-src="' + esc(card.clean) + '" data-cap="' + esc(slotLabel(card)) + ' · препарат без подписей">' +
         '<img src="' + esc(card.clean) + '" alt="Микропрепарат без подписей" loading="eager">' +
         '<span class="quiz__zoomhint">Нажмите, чтобы увеличить</span>' +
       '</div>' +
-      // Номер препарата — часть ответа: в вопросе его не показываем.
-      '<div class="quiz__meta"><div class="chip-row">' + (mentionsAnswer(sys.title, g) ? '' : '<span class="badge">' + esc(sys.title) + '</span>') + maskBadge(card) +
-        '<span class="badge">' + esc(card.source) + '</span></div>' +
+      // В вопросе не подсказываем ответ: ни номер препарата, ни раздел
+      // (например «Эндокринная система»), ни название в подписи к снимку.
+      // Номер и раздел появляются в разборе после ответа.
+      '<div class="quiz__meta"><div class="chip-row">' + maskBadge(card) +
+        '<span class="badge">' + esc(slotLabel(card)) + '</span></div>' +
         '<button type="button" class="btn btn--sm btn--ghost" data-action="favorite">' + (p.favorite ? '★ В избранном' : '☆ В избранное') + '</button></div>' +
       '</section>';
 

@@ -710,3 +710,53 @@ test('UI: меню раскрывается в шапке и видно в лю�
   toggle.click();
   assert.equal(nav.hidden, true, 'меню не закрылось');
 });
+
+test('UI: до ответа в тренировке нет подсказок — номера препарата и раздела', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  // Раскрытый снимок раньше подписывался названием препарата, в плашке
+  // стоял «№ 91», а рядом — раздел вроде «Эндокринная система». Это
+  // готовые подсказки: до ответа их показывать нельзя.
+  const { w } = boot();
+  const tick = () => new Promise(r => setTimeout(r, 20));
+  return (async () => {
+    visit(w, 'train');
+    const mode = w.document.querySelector('[data-action="set-mode"][data-mode="choice"]');
+    if (mode && mode.getAttribute('aria-pressed') !== 'true') mode.click();
+    w.document.querySelector('[data-action="start"]').click();
+    await tick();
+
+    const groups = w.HISTO_DATA.groups;
+    const problems = [];
+    const seen = new Set();
+    for (let i = 0; i < 60; i++) {
+      const wrap = w.document.querySelector('.quiz__imgwrap');
+      const meta = w.document.querySelector('.quiz__meta');
+      if (!wrap || !meta) break;
+      const cap = wrap.getAttribute('data-cap') || '';
+      const chips = [...meta.querySelectorAll('.badge')].map(b => b.textContent.trim());
+      if (/№\s*\d/.test(cap)) problems.push('в подписи к снимку есть номер');
+      // «Слайд 113» — тот же номер препарата: 91-й препарат идёт слайдами 113–116
+      if (/слайд\s*\d/i.test(cap) || /слайд\s*\d/i.test(chips.join(' '))) {
+        problems.push('виден номер слайда: ' + cap.slice(0, 40));
+      }
+      if (/№\s*\d/.test(chips.join(' '))) problems.push('в плашке есть номер препарата');
+      w.HISTO_DATA.systems.forEach(sys => {
+        if (cap.includes(sys.title) || chips.includes(sys.title)) {
+          problems.push('виден раздел «' + sys.title + '»');
+        }
+      });
+      groups.forEach(g => {
+        if (cap.split(' · ')[0] === g.title) problems.push('в подписи к снимку название «' + g.title + '»');
+      });
+      const opt = w.document.querySelector('.option');
+      if (!opt) break;
+      const key = opt.textContent.trim();
+      if (seen.has(key)) break;
+      seen.add(key);
+      opt.click();
+      await tick();
+      w.document.querySelector('[data-action="next"]').click();
+      await tick();
+    }
+    assert.deepEqual(problems.slice(0, 6), [], problems.join('; '));
+  })();
+});
