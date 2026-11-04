@@ -822,6 +822,16 @@ window.HISTO_DATA = {
       "pdf": "0113"
     },
     {
+      "id": "0113-014-1-mask",
+      "groupId": "cornea",
+      "clean": "assets/prep/0113-014-1-mask.jpg",
+      "reveal": "assets/reveal/0113-014-1-mask.jpg",
+      "masked": true,
+      "source": "Слайд 126",
+      "page": 14,
+      "pdf": "0113"
+    },
+    {
       "id": "0113-018-0-mask",
       "groupId": "retina",
       "clean": "assets/prep/0113-018-0-mask.jpg",
@@ -1039,6 +1049,26 @@ window.HISTO_DATA = {
       "masked": true,
       "source": "Слайд 151",
       "page": 39,
+      "pdf": "0113"
+    },
+    {
+      "id": "0113-041-0-mask",
+      "groupId": "heart",
+      "clean": "assets/prep/0113-041-0-mask.jpg",
+      "reveal": "assets/reveal/0113-041-0-mask.jpg",
+      "masked": true,
+      "source": "Слайд 153",
+      "page": 41,
+      "pdf": "0113"
+    },
+    {
+      "id": "0113-041-1-mask",
+      "groupId": "heart",
+      "clean": "assets/prep/0113-041-1-mask.jpg",
+      "reveal": "assets/reveal/0113-041-1-mask.jpg",
+      "masked": true,
+      "source": "Слайд 153",
+      "page": 41,
       "pdf": "0113"
     },
     {
@@ -1309,6 +1339,16 @@ window.HISTO_DATA = {
       "masked": true,
       "source": "Слайд 181",
       "page": 69,
+      "pdf": "0113"
+    },
+    {
+      "id": "0113-070-0-mask",
+      "groupId": "parathyroid",
+      "clean": "assets/prep/0113-070-0-mask.jpg",
+      "reveal": "assets/reveal/0113-070-0-mask.jpg",
+      "masked": true,
+      "source": "Слайд 182",
+      "page": 70,
       "pdf": "0113"
     },
     {
@@ -3189,6 +3229,16 @@ window.HISTO_DATA = {
       "masked": true,
       "source": "Слайд 402",
       "page": 72,
+      "pdf": "0331"
+    },
+    {
+      "id": "0331-074-0-mask",
+      "groupId": "tooth_late",
+      "clean": "assets/prep/0331-074-0-mask.jpg",
+      "reveal": "assets/reveal/0331-074-0-mask.jpg",
+      "masked": true,
+      "source": "Слайд 404",
+      "page": 74,
       "pdf": "0331"
     },
     {
