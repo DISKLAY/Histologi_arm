@@ -230,3 +230,41 @@ test('UI: чистые кадры вытесняют замазанные из �
   assert.ok(revealChecked.size >= 10, 'слишком мало чистых карточек просмотрено: ' + revealChecked.size);
   assert.deepEqual(problems, [], 'правило показа нарушено:\n' + problems.join('\n'));
 });
+
+test('UI: подсказки — законченные фразы без обрывков', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  visit(w, 'train');
+  const mode = w.document.querySelector('[data-action="set-mode"][data-mode="choice"]');
+  if (mode && mode.getAttribute('aria-pressed') !== 'true') mode.click();
+  const all = w.document.querySelector('[data-action="set-count"][data-count="all"]');
+  if (all) all.click();
+  w.document.querySelector('[data-action="start"]').click();
+
+  const dangling = /^(в|во|на|с|со|из|от|до|по|при|для|к|ко|у|над|под|за|про|через|и|а|но|или|что|как|котор\w*)$/i;
+  const problems = [];
+  const seen = new Set();
+  for (let i = 0; i < 400; i++) {
+    const wrap = w.document.querySelector('.quiz__imgwrap');
+    if (!wrap) break;
+    const cap = (wrap.getAttribute('data-cap') || '').split(' · ')[0];
+    const g = w.HISTO_DATA.groups.find(x => x.title === cap);
+    const id = g ? g.id : cap;
+    if (!seen.has(id)) {
+      seen.add(id);
+      w.document.querySelector('[data-action="hint"]').click();
+      const box = w.document.querySelector('.hintbox');
+      const text = box ? box.textContent.replace(/\s+/g, ' ').trim() : '';
+      const tail = text.replace(/[.!?…;:,]+$/, '').split(' ').pop() || '';
+      if (!text) problems.push(id + ': пустая подсказка');
+      if (dangling.test(tail)) problems.push(`${id}: обрыв на «${tail}»`);
+      if (/т\.\s*[ке]\.?$/.test(text)) problems.push(id + ': обрыв на сокращении «т.к.»');
+      if (/…$/.test(text)) problems.push(id + ': многозначительное многоточие');
+      if (/\bвидно\s+(покрыт|состоит|представлен|образован)/.test(text)) problems.push(id + ': висячее причастие');
+      if (/\bклеток\s+[а-яё]+(ых|ые|ой),/.test(text)) problems.push(id + ': прилагательное без существительного');
+    }
+    w.document.querySelector('[data-action="skip"]').click();
+    w.document.querySelector('[data-action="next"]').click();
+  }
+  assert.ok(seen.size >= 50, 'просмотрено слишком мало препаратов: ' + seen.size);
+  assert.deepEqual(problems, [], 'подсказки с обрывками:\n' + problems.join('\n'));
+});
