@@ -331,7 +331,8 @@
         '<img src="' + esc(card.clean) + '" alt="Микропрепарат без подписей" loading="eager">' +
         '<span class="quiz__zoomhint">Нажмите, чтобы увеличить</span>' +
       '</div>' +
-      '<div class="quiz__meta"><div class="chip-row">' + badge(g) + maskBadge(card) +
+      // Номер препарата — часть ответа: в вопросе его не показываем.
+      '<div class="quiz__meta"><div class="chip-row">' + (mentionsAnswer(sys.title, g) ? '' : '<span class="badge">' + esc(sys.title) + '</span>') + maskBadge(card) +
         '<span class="badge">' + esc(card.source) + '</span></div>' +
         '<button type="button" class="btn btn--sm btn--ghost" data-action="favorite">' + (p.favorite ? '★ В избранном' : '☆ В избранное') + '</button></div>' +
       '</section>';
@@ -340,10 +341,16 @@
       '<div class="quiz__progress"><i style="width:' + pct(s.idx, s.ids.length) + '%"></i></div>' +
       '<div class="quiz__top"><span class="quiz__count">Вопрос ' + (s.idx + 1) + ' из ' + s.ids.length + '</span><span class="badge">' + esc(s.label) + '</span></div>' +
       '<div class="quiz__question">Что за препарат на снимке?</div>' +
-      '<div class="quiz__sub">' + (hinted ? 'Подсказка: ' + esc(sys.title) + ' · окраска ' + esc(g.stain) + (g.number ? ' · № ' + esc(g.number) : '') : 'Ориентируйтесь на структуру ткани и окраску.') + '</div>';
+      '<div class="quiz__sub">' + (hinted ? 'Подсказка: ' + esc(systemHint(sys, g)) + ' · окраска ' + esc(g.stain) : 'Ориентируйтесь на структуру ткани и окраску.') + '</div>';
 
     if (hinted && !ans) {
-      right += '<div class="hintbox"><strong>Первые буквы:</strong> ' + esc(maskTitle(g)) + '<br><span style="opacity:.85">' + esc(sys.title) + (g.number ? ' · препарат № ' + esc(g.number) : '') + ' · ' + esc(g.stain) + '</span></div>';
+      // В режиме выбора маска букв — это готовый ответ: из четырёх вариантов
+      // она совпадает ровно с одним. Там подсказываем описанием структуры.
+      // Система и окраска уже стоят в quiz__sub — в плашке они не нужны.
+      var hintText = s.mode === 'choice'
+        ? esc(hintClue(g))
+        : '<strong>Первые буквы:</strong> ' + esc(maskTitle(g));
+      right += '<div class="hintbox">' + hintText + '</div>';
     }
 
     if (!ans) {
@@ -385,6 +392,255 @@
       return /[a-zа-я0-9]/i.test(ch) && i > 1 && i % 3 !== 0 ? '_' : ch;
     }).join('');
   }
+  /* Названия препарата в разных видах: нужно, чтобы вычистить их из описания.
+     Половина описаний в PDF начинается с «Препарат № N. <название>. ...». */
+  function keyOf(s) {
+    return String(s || '').toLowerCase().replace(/ё/g, 'е')
+      .replace(/[^a-zа-я0-9]+/g, ' ').trim();
+  }
+  function titlePaths(g) {
+    var out = [];
+    function push(s) {
+      s = String(s || '').replace(/\s+/g, ' ').trim();
+      if (keyOf(s).replace(/[^a-zа-я0-9]/g, '').length < 4) return;
+      for (var i = 0; i < out.length; i++) {
+        if (keyOf(out[i]) === keyOf(s)) return;
+      }
+      out.push(s);
+    }
+    push(g.title);
+    push(shortTitle(g));
+    // Содержимое скобок бывает уточнением с союзом («Плацента (плодная и
+    // материнская части)») — тогда его части тоже называют препарат.
+    var m = /\(([^)]+)\)/.exec(g.title || '');
+    // «(поперечный срез)», «(мазок)», «(срез яичника кошки)» — это не название, а
+    // описание снимка: вырезать его из текста подсказки незачем.
+    var GENERIC = /срез|разрез|мазок|стади|окраск|поперечн|продольн|светов(ая|ой)|гистолог/i;
+    if (m && !GENERIC.test(m[1])) {
+      push(m[1]);
+      String(m[1]).split(/\s+(?:и|или)\s+/).forEach(push);
+    }
+    return out;
+  }
+  /* Подсказка, которая не выдаёт ответ. Из описания убираются название
+     препарата, его номер и служебные «Раздел:»/«Окраска:»; остаётся рассказ о
+     том, что видно на срезе. Название вычищается по словам и с учётом
+     словоформ: иначе «Печень свиньи» превращалась бы в «и» посреди фразы, а
+     «Волокна Пуркинье» оставались бы в тексте. Уцелевшие обрывки («…зёнка»,
+     «(нижний мозговой придаток)…») отбрасываются: из нескольких предложений
+     собирается связный текст. Если осмысленного описания нет — подсказка
+     говорит о структурах, не называя орган. */
+  var HINT_FALLBACK = 'Сравните форму, границы и взаимное расположение структур на срезе.';
+  var SYSTEM_SCOPE = {
+    nervous: 'нервной ткани', sense: 'органов чувств', cardio: 'сосудистой стенки',
+    endocrine: 'железистой ткани', immune: 'лимфоидной ткани', digestive: 'слизистой оболочки',
+    respiratory: 'дыхательных путей', urinary: 'мочевыделительной системы',
+    reproductive: 'половой системы', skin: 'кожи', tooth: 'формирующегося зуба',
+    embryo: 'эмбриональных тканей'
+  };
+  /* Основа слова: «пуркинье» ≈ «пуркинье», «волокна» ≈ «волокон», «печени» ≈ «печень». */
+  function stemOf(w) {
+    if (w.length <= 3) return w;
+    return w.length <= 6 ? w.slice(0, 4) : w.slice(0, w.length - 2);
+  }
+  function sameWord(a, b) {
+    if (a === b) return true;
+    if (a.length < 4 || b.length < 4) return false;
+    var x = stemOf(a), y = stemOf(b);
+    return x === y || (x.length >= 4 && y.indexOf(x) === 0) || (y.length >= 4 && x.indexOf(y) === 0);
+  }
+  /* Удаляет из текста фразу по словам, не разрезая соседние слова. */
+  function cutPhrase(text, phrase) {
+    var parts = keyOf(phrase).split(' ').filter(Boolean);
+    if (!parts.length) return text;
+    var tokens = String(text).split(/(\s+)/);
+    var pos = [], words = [];
+    for (var i = 0; i < tokens.length; i += 2) {
+      if (!tokens[i]) continue;
+      pos.push(i);
+      words.push(keyOf(tokens[i]).replace(/[^a-zа-я0-9]/g, ''));
+    }
+    for (var k = 0; k + parts.length <= words.length; k++) {
+      var match = true;
+      for (var j = 0; j < parts.length; j++) {
+        if (!sameWord(words[k + j], parts[j])) { match = false; break; }
+      }
+      if (!match) continue;
+      var gap = pos[k] > 0 && /\W$/.test(tokens[pos[k] - 1] || '');
+      for (var m = 0; m < parts.length; m++) tokens[pos[k + m]] = ' ';
+      var out = tokens.join('').replace(/\s+([.,;:])/g, '$1').replace(/[ \t]{2,}/g, ' ');
+      // Если название стояло в начале фразы, забираем и его инициал.
+      if (gap) out = out.replace(/(^|[.!?]\s+)[а-яё]\s+/g, '$1');
+      return out;
+    }
+    return text;
+  }
+  /* Слово встречается в названии только одного препарата — значит, по нему
+     можно узнать ответ. */
+  function isDistinctWord(word) {
+    var stem = stemOf(word), hits = 0;
+    for (var i = 0; i < groups.length; i++) {
+      var t = keyOf(groups[i].title).split(' ');
+      for (var j = 0; j < t.length; j++) {
+        if (t[j].length >= 6 && t[j].indexOf(stem) === 0) { hits++; break; }
+      }
+      if (hits > 1) return false;
+    }
+    return hits === 1;
+  }
+  function hintClue(g) {
+    // В текстах из PDF встречаются неразрывные пробелы и мягкие переносы — они
+    // ломают и сравнение слов, и границы предложений.
+    var raw = String(g.hint || '')
+      .replace(/[\u00a0\u202f\u2009\u2007]/g, ' ')
+      .replace(/[\u00ad\u2010\u2011\ufe63]/g, '-')
+      .replace(/\s+/g, ' ').trim();
+
+    // Служебная шапка («ОКРАСКА ГЕМАТОКСИЛИНОМ И ЭОЗИНОМ», «Раздел: …») часто
+    // приклеена к первому предложению без точки — отделяем её заранее.
+    raw = raw.replace(/\s+(?=(ОКРАСКА|ОКРАШИВАНИЕ|РАЗДЕЛ|ПРЕПАРАТ|Препарат|Окраска|Раздел|Общая характеристика)(?![а-яёa-z]))/g, '. ');
+    raw = raw.replace(/Гематоксилин\s*[-–—]\s*эозин(?![а-яёa-z])/gi, ' ');
+    raw = raw.replace(/(?<![а-яёa-z])(ОКРАСКА|ОКРАШИВАНИЕ)(?![а-яёa-z])/gi, '. $1');
+    raw = raw.replace(/(срез)(?=(артери|вен|нерв|капилляр))/gi, '$1 ');
+    raw = raw.replace(/\s+/g, ' ').trim();
+
+    // Название препарата в начале предложения — это заголовок слайда: вместе с
+    // ним уходит и сказуемое, такой кусок не спасти. Убираем целиком. Если
+    // название стоит в середине фразы, вырезаем только его.
+    var sentences = raw.split(/(?<=[.!?…])\s+/).map(function (x) {
+      return x.replace(/^\s*\d+[.)]\s*/, '').replace(/^[\s.,;:—–-]+/, '').trim();
+    }).filter(Boolean).map(function (st) {
+      var head = /^([^,.:;]{0,40})/.exec(st)[0];
+      var lead = keyOf(head).split(' ').filter(Boolean);
+      var title = keyOf(st).split(' ').filter(Boolean);
+      var names = titlePaths(g).map(function (n) {
+        return keyOf(n).split(' ').filter(Boolean);
+      });
+      var opensWithName = names.some(function (p) {
+        if (!p.length || p.length > lead.length) return false;
+        for (var i = 0; i < p.length; i++) {
+          if (!sameWord(lead[i], p[i]) && lead[i].indexOf(stemOf(p[i])) !== 0) return false;
+        }
+        return true;
+      });
+      if (opensWithName) return '';
+      var t = st;
+      for (var pass = 0; pass < 3; pass++) {
+        var before = t;
+        titlePaths(g).forEach(function (name) { t = cutPhrase(t, name); });
+        if (t === before) break;
+      }
+      return t;
+    }).filter(Boolean);
+
+    var kept = [];
+    sentences.forEach(function (st) {
+      var t = st
+        .replace(/^\s*(ГЕМАТОКСИЛИН|ЭОЗИН|ПИКРОФУКСИН|КОНГОРОТ|ИМПРЕГНАЦ)\w*[^.]*\.?\s*/i, '')
+        .replace(/(^|[\s.;])(Раздел|Окраска|Препарат)(?![а-яёa-z])\s*:[^.]*\.?/gi, '$1')
+        .replace(/(^|[\s.;])ОКРАСКА(?![а-яёa-z])[^.]*\.?/gi, '$1')
+        .replace(/^\s*Общая характеристика\s*:\s*/i, '')
+        .replace(/^\s*(Локализация|Строение|Функция|Состав|Расположение)\s*:\s*/i, '')
+        .replace(/^\s*Важный момент\s*:\s*/i, '')
+        .replace(/\s*[•·]\s*/g, ' ')
+        .replace(/\s+/g, ' ').replace(/^[\s.,;:—–-]+/, '').trim();
+      if (t && /^[а-яё]/.test(t)) t = t.charAt(0).toUpperCase() + t.slice(1);
+      if (mentionsAnswer(t, g)) return;
+      if (!isCleanSentence(t)) return;
+      kept.push(t);
+    });
+
+    // «Они собраны в пучки…», «Она состоит из…» — подлежащее осталось в
+    // предыдущем (вырезанном) предложении, читается как обрывок.
+    kept = kept.filter(function (x) {
+      // «Они собраны…» — подлежащее осталось в вырезанном предложении;
+      // «Это позволяет…» — отсылка к тому, чего в подсказке уже нет.
+      if (/^(Он|Она|Они|Оно|Его|Её|Их)\s+[а-яё]/i.test(x)) return false;
+      if (/^Это\s+(позволяет|даёт|видно|объясняется)/i.test(x)) return false;
+      return true;
+    });
+    // Короткие обрывки по краям вырваны из контекста («…жировая ткань.»).
+    while (kept.length > 1 && kept[0].replace(/[^a-zа-яё0-9]/gi, '').length < 30) kept.shift();
+    while (kept.length > 1 &&
+           kept[kept.length - 1].replace(/[^a-zа-яё0-9]/gi, '').length < 30) kept.pop();
+
+    var out = kept.join(' ').replace(/\s+/g, ' ').trim();
+    if (out.length > 240) {
+      var cut = out.slice(0, 240);
+      var stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('; '));
+      out = (stop > 80 ? cut.slice(0, stop + 1)
+        : cut.replace(/[\s,;:—–-]+\S*$/, '') + '\u2026').trim();
+    }
+    out = out.replace(/(?<![А-Яа-яЁёA-Za-z])\([^)]*\b(Tunica|Stratum|Papillae|Cryptae|gemmae|scala|stratum|Folliculi|Epidermis|Cortex|lobuli)\b[^)]*\)/g,
+      function (m) { return m; })
+      .replace(/\s*\)\s*/g, ' ')
+      .replace(/\s*\(\s*/g, ' ')
+      .replace(/\bткань,\s*(заполняет|образует|состоит)\b/gi, 'ткань $1')
+      .replace(/\(\s*[,;:]\s*/g, '(').replace(/\(\s*\)/g, ' ')
+      .replace(/\s*\(\s*(?=[.,;:]|$)/g, '')
+      .replace(/\(\s*([.,;:]|$)/g, '$1').replace(/\)\s*,/g, '),')
+      .replace(/[;,]\s*\./g, '.').replace(/\.\s*\./g, '.')
+      .replace(/\s+([.,;:])/g, '$1').replace(/\s{2,}/g, ' ')
+      .replace(/^[\s.,;:—–-•·]+/, '').replace(/[\s,;:—–-]+$/, '').trim();
+    if (out && !/[.!?…]$/.test(out)) out += '.';
+    if (out.replace(/[^a-zа-яё0-9]/gi, '').length < 40) {
+      out = 'На снимке — участок ' + (SYSTEM_SCOPE[g.system] || 'ткани') + '. ' + HINT_FALLBACK;
+    }
+    return out;
+  }
+
+  /* Название раздела иногда само содержит ответ: раздел «Плацента и
+     эмбриональные ткани» однозначно указывает на плаценту. В таком случае
+     показываем нейтральную подпись. */
+  function systemHint(sys, g) {
+    return mentionsAnswer(sys.title, g) ? 'Раздел скрыт' : sys.title;
+  }
+  /* Встречается ли в тексте название препарата — в том числе внутри слова
+     («аденогипофиз» для «Гипофиз», «двенадцатиперстной» для «12-перстная кишка»). */
+  function mentionsAnswer(text, g) {
+    var words = keyOf(text).split(' ').filter(Boolean);
+    var paths = titlePaths(g).map(function (n) {
+      var words = keyOf(n).split(' ').filter(function (w) { return w.length >= 4; });
+      // Главное слово названия тоже выдаёт ответ («миндалина» в «Нёбная миндалина»),
+      // но только если оно отличает препарат от остальных: «желудка» есть и у
+      // «Фундального отдела», и у «Пилорической части», поэтому не считается.
+      var head = words[words.length - 1];
+      if (words.length > 1 && head && head.length >= 6 && isDistinctWord(head)) words = [head];
+      return words;
+    });
+    for (var i = 0; i < paths.length; i++) {
+      var p = paths[i];
+      if (!p.length) continue;
+      for (var k = 0; k + p.length <= words.length; k++) {
+        var ok = true;
+        for (var j = 0; j < p.length; j++) {
+          var w = words[k + j], q = p[j];
+          if (!sameWord(w, q) && w.indexOf(stemOf(q)) !== 0) { ok = false; break; }
+        }
+        if (ok) return true;
+      }
+    }
+    return false;
+  }
+  /* Годится ли предложение в подсказку: не начинается с обрывка, не служебное,
+     содержит достаточно слов и хотя бы одно «тканевое» слово. Первое
+     предложение описания часто бывает без подлежащего — его удаление при
+     вычистке названия даёт «резе на жёлто-коричневом фоне…», поэтому такие
+     обрывки отсеиваются по отсутствию ключевого слова. */
+  /* Зачины, которые сами по себе осмысленны и не являются обрывком. */
+  var ORPHAN_OK = /^(Стенка|Слизистая|Железистые|Паренхима|Корковое|Мозговое|Капсула|Ворсины|Крипты|Слои|Клетки|Эпидермис|Дерма|Три|Два|Орган|Органы|Железа|Кость|Зуб|Трубка|Сосуд|Нерв|Мышца|Кожа|Язык|Пищевод|Желудок|Кишка|Печень|Почка|Лёгкое|Сердце|Матка|Яичник|Семенник|На|В|По|Из|С|У|При|Для|От|До|Под|Над|Между|Здесь|Строение|Снаружи|Изнутри|Вокруг|Часть|Ворсин|Оболочка|Снимке)(?![а-яё])/;
+  var HINT_KEYWORDS = /(сло|оболоч|клет|ткан|канал|ядр|капсул|дольк|фолликул|ворсин|крипт|сосочк|эпител|мыш|сосуд|волокн|мембран|стром|паренхим|желез|проток|синус|просвет|цитоплазм|мозгов|корков|вестибул|костн|хрящ|ретикул|коллаген|эластич|сероз|слизист)/i;
+  function isCleanSentence(s, minLetters) {
+    if (!s) return false;
+    var letters = s.replace(/[^a-zа-яё0-9]/gi, '').length;
+    if (letters < (minLetters || 10)) return false;
+    if (!/^[A-Z0-9ЁА-Я«"•\-–—]/.test(s)) return false;
+    if (!HINT_KEYWORDS.test(s)) return false;
+    if (/^\d+[.)]?\s*$/.test(s)) return false;
+    if (letters / s.length < 0.5) return false;
+    return true;
+  }
+
   function renderDone() {
     var s = state.session;
     var correct = 0;
