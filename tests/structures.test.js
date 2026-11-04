@@ -170,13 +170,14 @@ test('Запечённые подписи: карточки честные — �
   });
 });
 
-test('Запечённые подписи: в кадре-вопросе нет названия препарата', () => {
-  const file = path.join(ROOT, 'js', 'data', 'baked.js');
-  if (!fs.existsSync(file)) return;
-  // Шапку «Препарат №…» закрашиваем в кадре-вопросе: см. header_plate
+test('Запечённые подписи: без найденной шапки снимок в каталог не идёт', () => {
+  // Шапка «Препарат №107 «Стенка сердца»» в кадре — готовый ответ. Если её
+  // не удалось выделить и закрасить, такой снимок пропускаем целиком.
   const src = fs.readFileSync(path.join(ROOT, 'scripts', 'build_baked.py'), 'utf8');
   assert.ok(/def header_plate/.test(src), 'шапка препарата должна находиться');
-  assert.ok(/make_pair[\s\S]{0,1200}header_plate\(img\)/.test(src),
+  assert.ok(/if header_plate\(img\) is None:[\s\S]{0,300}continue/.test(src),
+    'без найденной шапки карточка создаваться не должна');
+  assert.ok(/make_pair[\s\S]{0,1500}header_plate\(img\)/.test(src),
     'кадр-вопрос должен закрашивать шапку препарата');
 });
 

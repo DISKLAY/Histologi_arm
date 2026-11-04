@@ -85,6 +85,10 @@ def header_plate(img: Image.Image):
     Векторного текста в таких слайдах нет — шапка тоже запечена в растр.
     Ищем крупный светлый прямоугольник в верхней трети картинки, внутри
     которого есть тёмные буквы.
+
+    Важно: сюда попадают далеко не все шапки (бывают серые, бывают
+    сросшиеся с рамкой снимка). Если шапка не найдена, снимок в каталог не
+    идёт — см. require_head в main.
     """
     a = np.asarray(img.convert("RGB")).astype(np.int16)
     h, w = a.shape[:2]
@@ -184,13 +188,28 @@ def plates_and_tips(img: Image.Image) -> list[dict]:
                 continue
             mx2, mn2 = sub.max(2), sub.min(2)
             light_in = float(((mx2 > 185) & ((mx2 - mn2) < 80)).mean())
+            framed = _framed(a, (x0, y0, x1, y1), S)
+            # Внутри плашки всегда светлая заливка (текст занимает 13–25 %).
+            # Замкнутая «рамка» без светлого внутри — это белая стрелка,
+            # упёршаяся кончиком в тёмный край: не подпись.
             if light_in < 0.52:
-                continue                   # тёмный кусок ткани, не плашка
+                continue
+            # Белый овал в препарате (пузырёк, просвет сосуда) тоже светлый
+            # внутри, но он закруглённый: ядро эрозии оставляет от него
+            # пятно, которое не доходит до краёв рамки. Требуем, чтобы
+            # ядро занимало заметную долю найденной рамки.
+            if (bx1 - bx0) * (by1 - by0) < 0.30 * (x1 - x0) * (y1 - y0):
+                continue
             dark = float((mx2 < 150).mean())
             # текст в плашке занимает 13–25 % площади; меньше 6 % — кусок линии
             if dark < 0.06:
                 continue
-            if _ring_light(a, (x0, y0, x1, y1), int(max(3, S * 4))) < 0.30:
+            # Вокруг плашки почти всегда белое поле страницы. Если его нет и
+            # рамка не замкнута — это, скорее всего, кусок снимка. Плашки на
+            # светлой ткани (лёгкое, гипофиз) иногда теряются: тогда в
+            # карточке будет пометка «покрытие неполное», а не ложная подпись.
+            if not framed and \
+               _ring_light(a, (x0, y0, x1, y1), int(max(3, S * 4))) < 0.30:
                 continue
             # Две подписи подряд — это строки, разнесённые на целую строку
             # (≈18S). Внутри одной плашки строки идут плотно, поэтому
@@ -211,6 +230,13 @@ def plates_and_tips(img: Image.Image) -> list[dict]:
         else:
             out.append(r)
 
+    # Плашка не бывает у самого края кадра: у края — хвост выноски, которую
+    # кадр обрезал, и его «рамка» замкнута краем изображения.
+    edge = 2
+    out = [r for r in out
+           if not (r[0] <= edge or r[1] <= edge
+                   or r[2] >= w - edge or r[3] >= h - edge)]
+
     # шапка препарата — не структура: она только закрашивается в вопросе
     head = header_plate(img)
     if head:
@@ -218,11 +244,33 @@ def plates_and_tips(img: Image.Image) -> list[dict]:
                if not (r[0] >= head[0] - 4 and r[2] <= head[2] + 4
                        and r[1] >= head[1] - 4 and r[3] <= head[3] + 4)]
 
+    out = _merge_boxes(a, out, S)
     out.sort(key=lambda r: (r[1] // max(1, int(S * 20)), r[0]))
-    return [{"plate": r} for r in out]
+    return [{"plate": list(r)} for r in out]
 
 
 # ---------------------------------------------------------------- страницы
+
+def head_visible(img: Image.Image) -> bool:
+    """Похоже ли, что в кадре видна шапка «Препарат №…»?
+
+    Если шапка есть, а find не смог её выделить, мы не имеем права отдавать
+    такой снимок в режим «Структуры»: в вопросе останется название
+    препарата. Это проверка «есть ли в верхней полосе плотная строка
+    текста, не похожая на плашку подписи».
+    """
+    a = np.asarray(img.convert("RGB")).astype(np.int16)
+    h, w = a.shape[:2]
+    band = a[:int(0.12 * h), :]
+    if band.size == 0:
+        return False
+    dark = band.min(2) < 130
+    if dark.sum() < 0.004 * band[:, :, 0].size:
+        return False
+    # строка должна быть длинной и идти по горизонтали
+    cols = np.where(dark.sum(0) > 0)[0]
+    return bool(len(cols)) and (cols.max() - cols.min()) > 0.35 * w
+
 
 def page_images(doc: pymupdf.Document, page: pymupdf.Page):
     """Встроенные картинки страницы: (xref, картинка, место на странице)."""
@@ -253,6 +301,101 @@ def pick_labelled(items):
 
 
 # ---------------------------------------------------------------- сборка
+
+def _merge_boxes(a: np.ndarray, boxes, S: float):
+    """Склеить рамки, если между ними нет тёмной линии-разделителя.
+
+    Одна плашка с двумя строками может распасться на два ядра. Это не две
+    подписи: между ними нет рамки, только белая заливка. Если же у каждой
+    плашки есть своя рамка, между ними будет тёмная линия — тогда не склеиваем.
+    """
+    out = []
+    for b in sorted(boxes, key=lambda r: (r[1], r[0])):
+        if out:
+            prev = out[-1]
+            same_col = not (b[2] <= prev[0] or b[0] >= prev[2])
+            # рамки могут перекрываться: верх второй плашки внутри первой
+            gap = b[1] - prev[3] if b[1] > prev[3] else 0
+            if same_col and gap <= max(3, S * 10):
+                x0 = min(prev[0], b[0]); x1 = max(prev[2], b[2])
+                ym = (prev[3] + b[1]) // 2
+                strip = a[max(0, ym - 2):ym + 3, x0:x1]
+                dark_strip = float((strip.max(2) < 150).mean()) if strip.size else 1.0
+                # Верхний прямоугольник без текста — это пустая часть той же
+                # плашки (высокая плашка распалась на два ядра). Настоящая
+                # подпись без текста не бывает.
+                upper = a[prev[1]:prev[3], prev[0]:prev[2]]
+                upper_txt = float((upper.max(2) < 150).mean()) if upper.size else 0.0
+                if dark_strip < 0.25 and (upper_txt < 0.02 or not upper.size):
+                    out[-1] = (x0, prev[1], x1, b[3])   # рамки между ними нет
+                    continue
+        out.append(tuple(b))
+    return out
+
+
+def _has_outline(a: np.ndarray, box, S: float) -> bool:
+    """Есть ли у прямоугольника тёмный контур хотя бы с двух сторон.
+
+    Плашки подписей обведены чёрным. Белые просветы в препарате — нет: там
+    край неровный и тёмного по всей стороне не наберётся. Двух сторон
+    достаточно, потому что найденная граница заливки бывает шире плашки
+    и нижняя/боковая рамка остаётся за пределами проверки.
+    """
+    h, w = a.shape[:2]
+    x0, y0, x1, y1 = [int(v) for v in box]
+    dark = a.max(2) < 195
+
+    def frac(pts):
+        vals = [dark[y, x] for y, x in pts if 0 <= y < h and 0 <= x < w]
+        return float(np.mean(vals)) if vals else 0.0
+
+    # рамка может лежать в 1–6 px от найденной границы заливки
+    def band(xs, ys):
+        best = 0.0
+        for o in range(-2, 7):
+            if xs is not None:
+                best = max(best, frac([(y0 + o, x) for x in xs]) if o < 0 else
+                           frac([(y1 + o, x) for x in xs]))
+            else:
+                best = max(best, frac([(y, x0 + o) for y in ys]) if o < 0 else
+                           frac([(y, x1 + o) for y in ys]))
+        return best
+
+    xs = range(x0 + 3, x1 - 2)
+    ys = range(y0 + 3, y1 - 2)
+    sides = [band(xs, None), band(None, ys)]
+    top = max(frac([(y0 - o, x) for x in xs]) for o in range(1, 7))
+    bot = max(frac([(y1 + o, x) for x in xs]) for o in range(1, 7))
+    lef = max(frac([(y, x0 - o) for y in ys]) for o in range(1, 7))
+    rig = max(frac([(y, x1 + o) for y in ys]) for o in range(1, 7))
+    return sum(1 for v in (top, bot, lef, rig) if v > 0.45) >= 2
+
+
+def _framed(a: np.ndarray, box, S: float) -> bool:
+    """Замкнута ли плашка тёмной рамкой.
+
+    Плашки в слайдах обведены чёрным контуром. Если снимок светлый (ткань
+    почти белая), «светлое внутри» перестаёт отличать плашку от фона —
+    тогда решает рамка. Проверяем, что вдоль каждой из четырёх сторон
+    есть линия тёмного.
+    """
+    h, w = a.shape[:2]
+    x0, y0, x1, y1 = [int(v) for v in box]
+    dark = a.max(2) < 190
+
+    def frac(pts):
+        vals = [dark[y, x] for y, x in pts if 0 <= y < h and 0 <= x < w]
+        return float(np.mean(vals)) if vals else 0.0
+
+    for off in (1, 2, 3):
+        top = frac([(y0 - off, x) for x in range(x0 + 3, x1 - 2)])
+        bot = frac([(y1 + off, x) for x in range(x0 + 3, x1 - 2)])
+        lef = frac([(y, x0 - off) for y in range(y0 + 3, y1 - 2)])
+        rig = frac([(y, x1 + off) for y in range(y0 + 3, y1 - 2)])
+        if min(top, bot, lef, rig) > 0.55:
+            return True
+    return False
+
 
 def _split_stacked(a: np.ndarray, box, S: float, min_gap: float = 0):
     """Разделить слипшиеся плашки, стоящие одна под другой.
@@ -305,17 +448,50 @@ def _mark_font(size: int):
 
 
 def erasable_plates(img: Image.Image, plates: list[dict]):
-    """Прямоугольники плашек для заливки белым (с запасом наружу).
+    """Прямоугольники плашек для заливки белым.
 
-    Без запаса остаются тонкие чёрные рамки облачка и кадр-вопрос выглядит
-    как «дырки» в снимке.
+    Найденная рамка плашки часто чуть меньше самой плашки (эрозия ядром
+    съедает край), поэтому заливка «по рамке» оставляет обрезки букв и
+    кусок стрелки. Расширяем прямоугольник до тёмного контура: идём наружу
+    по каждой стороне, пока не упрёмся в тёмную линию.
     """
+    a = np.asarray(img.convert("L")).astype(int)
+    h, w = a.shape
     out = []
     for p in plates:
         x0, y0, x1, y1 = p["plate"]
-        m = 2
-        out.append((max(0, x0 - m), max(0, y0 - m),
-                    min(img.width, x1 + m), min(img.height, y1 + m)))
+
+        def scan(x, y, dx, dy, limit):
+            """Дойти до тёмной рамки по направлению (dx, dy).
+
+            Если рамки нет (вышли за кадр или упёрлись в светлое), возвращаем
+            небольшой запас, а не весь предел: иначе заливка уезжает в препарат.
+            """
+            run = 0
+            for k in range(1, limit):
+                xx, yy = x + dx * k, y + dy * k
+                if not (0 <= xx < w and 0 <= yy < h):
+                    break
+                if a[yy, xx] < 150:
+                    return k + 2
+                if a[yy, xx] > 200:
+                    run = 0
+                else:
+                    run += 1
+                    if run > 4:      # началась ткань — рамки нет
+                        break
+            return 3
+
+        cx = (x0 + x1) // 2
+        cy = (y0 + y1) // 2
+        lim_x = max(6, (x1 - x0) // 2)
+        lim_y = max(6, (y1 - y0) // 2)
+        left = scan(x0, cy, -1, 0, lim_x)
+        right = scan(x1, cy, 1, 0, lim_x)
+        up = scan(cx, y0, 0, -1, lim_y)
+        down = scan(cx, y1, 0, 1, lim_y)
+        out.append((max(0, x0 - left), max(0, y0 - up),
+                    min(w, x1 + right), min(h, y1 + down)))
     return out
 
 
@@ -422,9 +598,24 @@ def main() -> int:
             print(f"  ! {cid}: плашек {len(plates)}, названий {len(names)}")
             continue
 
+        # Без найденной шапки в кадре-вопросе останется «Препарат №107
+        # «Стенка сердца»» — готовая подсказка. Такие снимки в каталог не
+        # берём: лучше меньше карточек, но без выданных ответов.
+        if header_plate(img) is None:
+            stats["шапка не найдена"] += 1
+            print(f"  ? {cid}: шапка препарата не найдена — пропуск")
+            continue
+
         question, answer, scale = make_pair(img, plates)
         question.save(IMG_DIR / f"{cid}-q.jpg", "JPEG", quality=85, optimize=True)
         answer.save(IMG_DIR / f"{cid}-a.jpg", "JPEG", quality=85, optimize=True)
+
+        if len(plates) < 3:
+            # Одна-две плашки на слайде — почти наверняка не всё: часть
+            # подписей лежит на светлой ткани и сливается с ней. Честнее
+            # сказать об этом, чем показывать неполный набор как полный.
+            stats["мало плашек"] += 1
+            print(f"  ~ {cid}: найдено всего {len(plates)} плашек — покрытие неполное")
 
         labels = []
         for name, p in zip(names, plates):
