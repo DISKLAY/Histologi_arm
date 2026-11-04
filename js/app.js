@@ -969,8 +969,13 @@
         '<section class="card card--pad"><h2 style="font-size:1.05rem;margin-bottom:14px">По разделам</h2>' +
           '<div class="table-wrap"><table class="table table--stats"><thead><tr><th>Раздел</th><th>Пройдено</th><th>Точность</th></tr></thead><tbody>' +
           ss.map(function (x) {
-            return '<tr><td><span class="badge badge--dot badge--system" style="color:' + x.s.color + '">' + esc(x.s.title) + '</span></td>' +
-              '<td>' + x.touched + ' / ' + x.cards + '</td><td>' + (x.seen ? x.accuracy + '%' : '—') + '</td></tr>';
+            return '<tr><td>' +
+              '<span class="badge badge--dot badge--system" style="color:' + x.s.color + '">' + esc(x.s.title) + '</span>' +
+              // На узком окне цифры уходят под название: в три колонки они
+              // не помещаются и раньше вылезали за карточку.
+              '<span class="table__sm"><span>Пройдено</span><span>' + x.touched + ' / ' + x.cards + '</span></span>' +
+              '<span class="table__sm"><span>Точность</span><span>' + (x.seen ? x.accuracy + '%' : '—') + '</span></span>' +
+              '</td><td>' + x.touched + ' / ' + x.cards + '</td><td>' + (x.seen ? x.accuracy + '%' : '—') + '</td></tr>';
           }).join('') + '</tbody></table></div></section>' +
         '<section class="card card--pad"><h2 style="font-size:1.05rem;margin-bottom:14px">Сложные препараты</h2>' +
           (hard.length ? hard.map(function (c) {

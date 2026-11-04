@@ -562,3 +562,22 @@ test('UI: длинные названия разделов в статистик
   assert.match(css, /\.summary-line__num\s*\{[^}]*white-space:\s*nowrap/, 'числа в строках должны оставаться целыми');
   assert.match(css, /\.stats-grid\s*\{[^}]*repeat\(4,\s*minmax\(0,\s*1fr\)\)/, 'колонки статистики могут распирать сетку');
 });
+
+test('UI: на узком окне «По разделам» перестраивается, а не вылезает', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  visit(w, 'stats');
+  // У каждой строки раздела есть запасные подписи «Пройдено» и «Точность».
+  const rows = [...w.document.querySelectorAll('#app .table--stats tbody tr')];
+  assert.ok(rows.length >= 10, 'не нашлись строки разделов');
+  rows.forEach(tr => {
+    const sub = [...tr.querySelectorAll('.table__sm')];
+    assert.equal(sub.length, 2, 'в строке нет пары «Пройдено / Точность» для узкого окна');
+    assert.match(sub[0].textContent, /Пройдено/, 'первая запасная строка должна быть «Пройдено»');
+    assert.match(sub[1].textContent, /Точность/, 'вторая запасная строка должна быть «Точность»');
+  });
+  const css = fs.readFileSync(path.join(ROOT, 'css/styles.css'), 'utf8');
+  assert.match(css, /@media\s*\(max-width:\s*820px\)/, 'нет правила для узкого окна');
+  assert.match(css, /\.table--stats td:not\(:first-child\)\s*\{\s*display:\s*none/, 'на узком окне лишние колонки не скрываются');
+  assert.match(css, /\.table__sm\s*\{\s*display:\s*flex/, 'запасные строки не показываются на узком окне');
+  assert.match(css, /\.table__sm\s*\{\s*display:\s*none/, 'запасные строки видны и на широком экране');
+});

@@ -319,6 +319,10 @@ img, svg { display: block; }
 .table--stats th:first-child, .table--stats td:first-child { width: 100%; }
 .table--stats td:not(:first-child) { white-space: nowrap; text-align: right; }
 .table--stats th:not(:first-child) { text-align: right; }
+/* Запасные строки «Пройдено / Точность» внутри ячейки: нужны только там, где
+   три колонки не помещаются. На широком экране их нет. */
+.table__sm { display: none; }
+.table__sm > span:first-child { color: var(--muted); }
 .badge--system { white-space: normal; max-width: 100%; padding: 4px 10px; line-height: 1.35; }
 .summary-line__num { white-space: nowrap; }
 
@@ -383,6 +387,20 @@ img, svg { display: block; }
   .card-row { flex-wrap: wrap; }
   .card-row__actions { width: 100%; justify-content: flex-start; }
 }
+/* Узкое окно (в т.ч. уменьшенное окно на ПК): таблица «По разделам» больше не
+   трёхколоночная — название сверху, «Пройдено» и «Точность» строчками под ним.
+   Горизонтальной прокрутки и наезжающих друг на друга надписей не остаётся. */
+@media (max-width: 820px) {
+  .table--stats thead { display: none; }
+  .table--stats, .table--stats tbody, .table--stats tr, .table--stats td { display: block; width: auto; }
+  .table--stats tr { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .table--stats tr:last-child { border-bottom: 0; }
+  .table--stats td { padding: 0; border-bottom: 0; text-align: left; }
+  .table--stats td:not(:first-child) { display: none; }
+  .table--stats .badge--system { margin-bottom: 7px; }
+  .table__sm { display: flex; justify-content: space-between; gap: 14px; font-size: .84rem; padding: 2px 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
