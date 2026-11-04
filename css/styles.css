@@ -357,3 +357,11 @@ img, svg { display: block; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Теория препарата в карточке атласа */
+.theory { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); padding: 14px 16px 6px; }
+.theory__head { font-size: .8rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--primary-strong); margin-bottom: 8px; }
+.theory__list { margin: 0 0 8px; padding-left: 18px; display: grid; gap: 7px; font-size: .87rem; line-height: 1.5; color: var(--text-2); }
+.theory__list li::marker { color: var(--primary); font-weight: 700; }
+.theory__hint { margin-top: 12px; font-size: .82rem; color: var(--muted); }
+.theory__note { margin: 0 0 10px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--amber-soft); color: var(--amber); font-size: .8rem; line-height: 1.4; }

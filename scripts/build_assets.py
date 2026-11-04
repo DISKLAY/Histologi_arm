@@ -742,6 +742,7 @@ def stitch_strips(doc: pymupdf.Document, entries) -> np.ndarray | None:
 
 
 HINT_CHARS = 700   # с запасом: приложение само укорачивает подсказку до 240 знаков
+THEORY_CHARS = 2600   # теория препарата в атласе: вся проза PDF, но без фанатизма
 
 
 def clean_text_snippet(text: str) -> str:
@@ -813,7 +814,7 @@ def page_prose(page, ignore=()) -> str:
     return " ".join(picked)
 
 
-def collect_hints(pages: dict) -> dict[str, str]:
+def collect_hints(pages: dict, texts: dict[str, str] | None = None) -> dict[str, str]:
     hints: dict[str, str] = {}
     for gid, title, number, stain, system, ranges in GROUPS:
         best = ""
@@ -836,10 +837,73 @@ def collect_hints(pages: dict) -> dict[str, str]:
                     fallback = clean_text_snippet(prose)
             if best:
                 break
+        text = (texts or {}).get(gid, "")
         hints[gid] = HINTS_MANUAL.get(gid) or best or fallback or (
             f"Раздел: {dict((s[0], s[1]) for s in SYSTEMS)[system]}. Окраска: {stain}."
         )
     return hints
+
+
+def collect_theory(pages: dict) -> dict[str, str]:
+    """Полная проза препарата для атласа.
+
+    Снимок — это экзамен, а проза PDF — теория: что видно на срезе, из чего
+    состоят слои, чем один препарат отличается от другого. Раньше в манифест
+    попадало только начало этой прозы (и урезанное до 700 знаков) — подсказку
+    из него собирает приложение. Для атласа нужен весь текст страниц группы.
+
+    Берём сырой текст страницы (а не только «чистые» абзацы): в нём остаются
+    целые фразы, начало которых стояло в одной строке с заголовком слайда.
+    Шапки («Препарат № 93», «Окраска: …», строка названия капсом), повторы
+    между страницами и оборванные огрызки отбрасываем.
+    """
+    theory: dict[str, str] = {}
+    for gid, title, number, stain, system, ranges in GROUPS:
+        seen: set[str] = set()
+        sentences: list[str] = []
+        for tag, a, b in ranges:
+            for pn in range(a, b + 1):
+                info = pages.get((tag, pn))
+                if not info:
+                    continue
+                raw = info["page"].get_text()
+                if not raw:
+                    continue
+                # Переносы внутри слова и мягкие дефисы — ломают и слова, и поиск.
+                raw = re.sub(r"[-\u00ad]\s*\n\s*", "", raw)
+                raw = re.sub(r"\s*\n\s*", " ", raw)
+                raw = re.sub(r"\s+", " ", raw).strip()
+                raw = re.sub(r"[•·●]\s*", " ", raw)
+                for line in split_sentences(raw):
+                    line = line.strip(" ,;:-")
+                    if not line:
+                        continue
+                    if SERVICE_LINE.match(line) or URL_RE.search(line):
+                        continue
+                    # Строка названия капсом («23.ПОДЖЕЛУДОЧНАЯ ЖЕЛЕЗА. ОКРАСКА…»).
+                    if sum(ch.isupper() for ch in line) > 0.6 * len(line.replace(" ", "")) and len(line) > 12:
+                        continue
+                    # Огрызки: фраза без конца разрезана картинкой или колонкой.
+                    if not re.search(r"[.!?…:;)\]]$", line):
+                        continue
+                    if len(re.sub(r"[^a-zа-яё0-9]", "", line.lower())) < 25:
+                        continue
+                    key = text_key(line)[:95]
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    sentences.append(line)
+        text = " ".join(sentences)
+        text = re.sub(r"\s+", " ", text).strip()
+        text = re.sub(r"^(\d+\.\s*)?(Препарат\s*№?\s*[\wа-яё]+[.:]?\s*)", "", text)
+        theory[gid] = (text or HINTS_MANUAL.get(gid, ""))[:THEORY_CHARS]
+    return theory
+
+
+def split_sentences(text: str) -> list[str]:
+    """Предложения, не разрезая «т.к.», «т.е.» и инициалы."""
+    text = re.sub(r"т\.\s*([ке])\.", r"т.\1.", text)
+    return [x for x in re.split(r"(?<=[.!?…])\s+(?=[«\"А-ЯЁA-Z0-9])", text) if x.strip()]
 
 
 def main() -> int:
@@ -882,6 +946,7 @@ def main() -> int:
     # картинок, затем — абзацы на страницах со слайдами (там текст часто лежит
     # рядом со снимком, и раньше такие группы оставались без описания).
     hints = collect_hints(pages)
+    theory = collect_theory(pages)
 
     if args.only_hints:
         dest = out / "js" / "data" / "preparations.js"
@@ -889,6 +954,7 @@ def main() -> int:
         data = json.loads(raw.split("=", 1)[1].rstrip().rstrip(";"))
         for grp in data["groups"]:
             grp["hint"] = hints[grp["id"]]
+            grp["theory"] = theory[grp["id"]]
         dest.write_text(
             "/* Сгенерировано scripts/build_assets.py. Не редактировать вручную. */\n"
             "window.HISTO_DATA = " + json.dumps(data, ensure_ascii=False, indent=2) + ";\n",
@@ -1043,7 +1109,7 @@ def main() -> int:
     for gid, title, number, stain, system, ranges in GROUPS:
         group = {
             "id": gid, "title": title, "number": number, "stain": stain,
-            "system": system, "hint": hints[gid],
+            "system": system, "hint": hints[gid], "theory": theory[gid],
             "slides": [f"{SLIDE_OFFSET[tag] + a}–{SLIDE_OFFSET[tag] + b}" for tag, a, b in ranges],
         }
         # Поля, которых этот генератор уже не пишет, при точечной пересборке

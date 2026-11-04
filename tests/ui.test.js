@@ -268,3 +268,47 @@ test('UI: подсказки — законченные фразы без обр
   assert.ok(seen.size >= 50, 'просмотрено слишком мало препаратов: ' + seen.size);
   assert.deepEqual(problems, [], 'подсказки с обрывками:\n' + problems.join('\n'));
 });
+
+test('UI: атлас показывает теорию и не показывает замазанные кадры', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  visit(w, 'atlas');
+  const problems = [];
+
+  // У каждой группы есть теория и обложка без «замазанного» кадра.
+  const missing = w.HISTO_DATA.groups.filter(g => !g.theory || g.theory.replace(/[^a-zа-яё0-9]/gi, '').length < 100);
+  if (missing.length) problems.push('нет теории: ' + missing.map(g => g.id).join(', '));
+
+  for (const gid of ['heart', 'cornea', 'lymph_node', 'pancreas', 'kidney_rat']) {
+    const card = w.document.querySelector(`[data-action="open-group"][data-gid="${gid}"]`);
+    if (!card) { problems.push(gid + ': нет карточки в атласе'); continue; }
+    const cover = card.querySelector('.prep-card__img img').getAttribute('src');
+    const cards = w.HISTO_DATA.cards.filter(c => c.groupId === gid);
+    const maskedSources = cards.filter(c => c.masked).map(c => c.clean).concat(cards.filter(c => c.masked && c.reveal).map(c => c.reveal));
+    if (cards.some(c => !c.masked) && maskedSources.includes(cover)) problems.push(gid + ': на обложке замазанный кадр');
+    if (!cover) problems.push(gid + ': нет обложки');
+
+    card.click();
+    const items = w.document.querySelectorAll('.theory__list li');
+    if (items.length < 3) problems.push(`${gid}: пунктов теории ${items.length}`);
+    const text = w.document.querySelector('.theory').textContent;
+    if (text.length < 200) problems.push(gid + ': теория короче 200 знаков');
+    if (/\.\.\.|…/.test(items[0].textContent)) problems.push(gid + ': теория начинается с обрывка');
+
+    // Замазанный кадр допустим только там, где чистых кадров у препарата нет
+    // вовсе, и он должен быть честно подписан.
+    const shots = [...w.document.querySelectorAll('.modal__shot img')].map(i => i.getAttribute('src'));
+    const maskedClean = cards.filter(c => c.masked).map(c => c.clean);
+    const hasClean = cards.some(c => !c.masked);
+    const bad = shots.filter(s => maskedClean.includes(s));
+    if (hasClean && bad.length) problems.push(`${gid}: в галерее замазанный кадр (${bad.length})`);
+    if (!hasClean && bad.length) {
+      const labels = [...w.document.querySelectorAll('.modal__shot p')]
+        .filter(p => p.textContent.includes('подписи удалены')).length;
+      if (!labels) problems.push(gid + ': замазанный кадр без пометки');
+      if (!w.document.querySelector('.theory__note')) problems.push(gid + ': нет пояснения, что чистого кадра нет');
+    }
+    if (!shots.length) problems.push(gid + ': галерея пуста');
+    w.document.querySelector('[data-action="close-modal"]').click();
+  }
+  assert.deepEqual(problems, [], 'атлас:\n' + problems.join('\n'));
+});

@@ -740,32 +740,119 @@
     var body = systems.filter(function (s) { return bySys[s.id] && bySys[s.id].length; }).map(function (s) {
       return '<section class="atlas-group"><div class="atlas-group__head"><span class="badge badge--dot" style="color:' + s.color + '">' + esc(s.title) + '</span><span class="count">' + bySys[s.id].length + ' препаратов</span></div>' +
         '<div class="atlas-grid">' + bySys[s.id].map(function (g) {
-          var cs = cardsByGroup[g.id] || [], first = cs[0];
+          var cs = cardsByGroup[g.id] || [];
           var seen = cs.filter(function (c) { return state.progress[c.id] && state.progress[c.id].seen > 0; }).length;
+          var count = cs.filter(function (c) { return !c.masked; }).length || cs.length;
           return '<article class="prep-card" data-action="open-group" data-gid="' + g.id + '">' +
-            '<div class="prep-card__img"><img src="' + esc(first ? first.clean : '') + '" alt="" loading="lazy"></div>' +
-            '<div class="prep-card__body"><h3>' + esc(g.title) + '</h3><div class="prep-card__meta">' + badge(g) + '<span class="badge">' + cs.length + ' снимков</span></div>' +
+            '<div class="prep-card__img"><img src="' + esc(atlasCover(g.id)) + '" alt="" loading="lazy"></div>' +
+            '<div class="prep-card__body"><h3>' + esc(g.title) + '</h3><div class="prep-card__meta">' + badge(g) + '<span class="badge">' + count + ' снимков</span></div>' +
             '<div class="prep-card__stats">Пройдено ' + seen + ' / ' + cs.length + ' · ' + esc(g.stain) + '</div></div></article>';
         }).join('') + '</div></section>';
     }).join('');
-    return '<div class="page-head"><div><div class="page-head__eyebrow">Коллекция</div><h1>Атлас препаратов</h1><p>Все снимки разложены по разделам. Нажмите на препарат, чтобы посмотреть чистые и подписанные варианты.</p></div></div>' +
+    return '<div class="page-head"><div><div class="page-head__eyebrow">Коллекция</div><h1>Атлас препаратов</h1><p>Все снимки разложены по разделам. Нажмите на препарат: там теория — что смотреть на срезе, — и снимки с подписями.</p></div></div>' +
       '<div class="atlas-tools"><input type="search" id="atlasSearch" placeholder="Поиск по названию, номеру или окраске…" value="' + esc(atlasQuery) + '">' +
       '<div class="chip-row"><button type="button" class="chip' + (atlasSystem === 'all' ? ' is-on' : '') + '" data-action="atlas-system" data-sid="all">Все разделы</button>' +
       systems.map(function (s) { return '<button type="button" class="chip' + (atlasSystem === s.id ? ' is-on' : '') + '" data-action="atlas-system" data-sid="' + s.id + '">' + esc(s.title) + '</button>'; }).join('') + '</div></div>' +
       (body || '<div class="empty"><div class="empty__icon">🔍</div><h3>Ничего не найдено</h3><p>Попробуйте другой запрос или сбросьте фильтр раздела.</p></div>');
   }
+  /* Обложка препарата в атласе: сначала чистый кадр, потом подписанный слайд.
+     Замазанный кадр на обложке смотрелся бы как испорченный снимок, а он нужен
+     только там, где других снимков у препарата нет. */
+  function atlasCover(gid) {
+    var cs = cardsByGroup[gid] || [];
+    var clean = cs.filter(function (c) { return !c.masked; })[0];
+    if (clean) return clean.clean;
+    var signed = cs.filter(function (c) { return c.reveal; })[0];
+    return signed ? signed.reveal : (cs[0] ? cs[0].clean : '');
+  }
+  /* Есть ли у препарата снимок, снятый без подписей. У 28 групп таких нет
+     вовсе: в PDF только слайд с подписями, и единственный способ показать
+     структуру без них — замазанный кадр. */
+  function hasClean(gid) {
+    return (cardsByGroup[gid] || []).some(function (c) { return !c.masked; });
+  }
+  /* Теория препарата: проза PDF режется на пункты по номерам слоёв, по
+     предложениям с двоеточием-зачином («Эндотелий: …») и просто по точкам.
+     Так текст читается списком, а не простынёй. */
+  function theoryBlocks(g) {
+    var raw = String(g.theory || g.hint || '')
+      .replace(/[\u00a0\u202f\u2009\u2007]/g, ' ')
+      .replace(/\s+/g, ' ').trim()
+      // Служебные зачины абзацев в PDF — не отдельные пункты.
+      .replace(/^(Общая характеристика|Описание|Строение)\s*:\s*/i, '')
+      .replace(/\s(Общая характеристика|Описание)\s*:\s*/gi, ' ');
+    if (!raw) return [];
+    // «1. Эндокард … 2. Миокард …» — каждый пункт с новой строки.
+    raw = raw.replace(/(?:^|\s)(\d{1,2})\s*\.\s*(?=[А-ЯЁA-Zа-яё])/g, '\n$1. ');
+    var blocks = [];
+    raw.split('\n').forEach(function (chunk) {
+      chunk = chunk.replace(/^[\s.,;:—–-]+/, '').trim();
+      if (!chunk) return;
+      // Фраза с зачином и двоеточием идёт отдельным пунктом вместе с
+      // продолжением, пока не кончится следующая «заголовочная» фраза.
+      var parts = chunk.split(/(?<=[.!?…])\s+(?=[А-ЯЁA-Z])/);
+      var cur = '';
+      parts.forEach(function (x) {
+        if (!cur) { cur = x; return; }
+        var isTerm = /^[А-ЯЁA-Z][^.!?…]{2,60}:/.test(x) || /^\d{1,2}\./.test(x);
+        if (isTerm) { blocks.push(cur); cur = x; }
+        else cur += ' ' + x;
+      });
+      if (cur) blocks.push(cur);
+    });
+    // Зачин-«шапка» без содержания («Слои (снаружи внутрь):») приклеиваем к
+    // следующему пункту, чтобы не висел отдельной строкой.
+    var merged = [];
+    blocks.forEach(function (b) {
+      var bare = /^[^.!?…]{3,60}:$/.test(b.trim());
+      if (bare && merged.length !== -1) {
+        if (!merged.length) merged.push(b.trim());
+        else merged[merged.length - 1] = merged[merged.length - 1];
+        return;
+      }
+      if (bare) return;
+      if (merged.length && /^[^.!?…]{3,60}:$/.test(merged[merged.length - 1].trim())) {
+        merged[merged.length - 1] = merged[merged.length - 1].replace(/:\s*$/, ': ') + b.trim();
+        return;
+      }
+      merged.push(b);
+    });
+    return merged.map(function (b) { return b.replace(/[;,]\s*$/, '').trim(); })
+      .filter(function (b) { return b.replace(/[^a-zа-яё0-9]/gi, '').length > 12; })
+      .slice(0, 14);
+  }
+  function theoryHtml(g) {
+    var blocks = theoryBlocks(g);
+    if (!blocks.length) return '';
+    return '<section class="theory"><h3 class="theory__head">Что смотреть</h3>' +
+      (hasClean(g.id) ? '' : '<p class="theory__note">В PDF у этого препарата нет снимка без подписей — ниже он с удалёнными подписями, рядом исходный слайд.</p>') +
+      '<ol class="theory__list">' + blocks.map(function (b) {
+        return '<li>' + esc(b) + '</li>';
+      }).join('') + '</ol></section>';
+  }
   function openGroup(gid) {
-    var g = groupById[gid], cs = cardsByGroup[gid] || [], sys = systemById[g.system];
+    var g = groupById[gid], all = cardsByGroup[gid] || [], sys = systemById[g.system];
+    // В атласе — только чистые кадры и подписанные слайды: замазанный кадр
+    // нужен был ради тренировки, а тут рядом лежит тот же препарат с
+    // настоящими подписями, и выноски читаются.
+    var cs = all.filter(function (c) { return !c.masked; });
+    if (!cs.length) cs = all;          // у группы нет чистых кадров — показываем замазанные
     var shots = cs.map(function (c) {
+      var label = c.masked ? 'подписи удалены' : (c.reveal ? 'чистый кадр' : 'снимок');
       return '<div class="modal__shot"><img src="' + esc(c.clean) + '" alt="" loading="lazy" data-action="zoom" data-src="' + esc(c.clean) + '" data-cap="' + esc(g.title) + ' · ' + esc(c.source) + '">' +
-        '<p><span>' + esc(c.source) + '</span>' + (c.masked ? '<span class="badge badge--mask">подписи удалены</span>' : '') + '</p></div>' +
+        '<p><span>' + esc(c.source) + '</span><span' + (c.masked ? ' class="badge badge--mask"' : '') + '>' + label + '</span></p></div>' +
         (c.reveal ? '<div class="modal__shot"><img src="' + esc(c.reveal) + '" alt="Подписанный вариант" loading="lazy" data-action="zoom" data-src="' + esc(c.reveal) + '" data-cap="' + esc(g.title) + ' · подписанный слайд"><p><span>С подписями</span><span>разбор</span></p></div>' : '');
     }).join('');
+    // Подписанные слайды других кадров группы — тоже часть атласа.
+    var extra = all.filter(function (c) { return c.masked; }).map(function (c) {
+      return c.reveal ? '<div class="modal__shot"><img src="' + esc(c.reveal) + '" alt="Подписанный вариант" loading="lazy" data-action="zoom" data-src="' + esc(c.reveal) + '" data-cap="' + esc(g.title) + ' · подписанный слайд"><p><span>С подписями</span><span>разбор</span></p></div>' : '';
+    }).join('');
     openModal('<div class="modal__head"><div><h2>' + esc(g.title) + '</h2><p>' + esc(sys.title) + ' · ' + esc(g.stain) + (g.number ? ' · препарат № ' + esc(g.number) : '') + ' · ' + esc(g.slides.join(', ')) + '</p></div><button class="modal__close" data-action="close-modal" aria-label="Закрыть">×</button></div>' +
-      '<div class="modal__body"><p style="font-size:.9rem;color:var(--text-2);margin-bottom:16px">' + esc(g.hint) + '</p>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px"><button type="button" class="btn btn--primary btn--sm" data-action="train-group-from" data-gid="' + gid + '">Тренировать этот препарат</button>' +
+      '<div class="modal__body">' + theoryHtml(g) +
+      '<p class="theory__hint">Коротко: ' + esc(g.hint) + '</p>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 18px"><button type="button" class="btn btn--primary btn--sm" data-action="train-group-from" data-gid="' + gid + '">Тренировать этот препарат</button>' +
       '<button type="button" class="btn btn--sm" data-action="favorite-group" data-gid="' + gid + '">★ Добавить все в избранное</button></div>' +
-      '<h3 style="font-size:.95rem;margin-bottom:11px">Снимки (' + cs.length + ')</h3><div class="modal__gallery">' + shots + '</div></div>');
+      '<h3 style="font-size:.95rem;margin-bottom:11px">Снимки' + (cs.length !== all.length ? ' (' + cs.length + ')' : ' (' + cs.length + ')') + '</h3><div class="modal__gallery">' + shots + extra + '</div></div>');
   }
 
   /* ------------------------------------------------------------- рендер: списки */
