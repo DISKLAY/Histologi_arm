@@ -31,6 +31,23 @@
     if (cardsByGroup[c.groupId]) cardsByGroup[c.groupId].push(c);
   });
 
+  /* У группы есть снимки, снятые без подписей? Тогда в тренировке замазанные
+     кадры той же группы ничего не добавляют: показываем чистый кадр, а
+     подписанный слайд человек открывает кнопкой после ответа. */
+  var cleanGroups = {};
+  cards.forEach(function (c) { if (!c.masked) cleanGroups[c.groupId] = true; });
+  function trainingCards(list) {
+    var out = list.filter(function (c) { return !c.masked || !cleanGroups[c.groupId]; });
+    return out.length ? out : list;
+  }
+  /* Чистый кадр без своего подписанного слайда: показываем подписанный снимок
+     другого кадра той же группы — препарат тот же, разбор всё равно нужен. */
+  function revealFor(card) {
+    if (card.reveal) return card.reveal;
+    var mate = (cardsByGroup[card.groupId] || []).filter(function (c) { return c.reveal; })[0];
+    return mate ? mate.reveal : null;
+  }
+
   /* ------------------------------------------------------------- состояние */
   function defaults() {
     return {
@@ -119,7 +136,7 @@
       if (filter === 'wrong' && prog(c.id).wrong === 0) return false;
       return true;
     });
-    return out;
+    return trainingCards(out);
   }
   function makeOptions(card) {
     var right = card.groupId, g = groupById[right];
@@ -144,9 +161,16 @@
     state.session = {
       ids: list, idx: 0, mode: opts.mode || state.settings.mode,
       label: opts.label || 'Тренировка', answers: {}, options: options,
-      started: Date.now(), hinted: {}
+      started: Date.now(), hinted: {}, finished: false,
+      // Откуда пришли: тренировку одного препарата запускают из атласа или из
+      // разбора посреди большой сессии, и после неё нужно вернуться туда же.
+      parent: opts.parent || null
     };
-    save(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+    save();
+    // Сессию можно запустить откуда угодно (атлас, избранное, статистика):
+    // без этого экран оставался прежним и казалось, что кнопка не работает.
+    if (route() !== 'train') go('train'); else render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
   function currentCard() {
     if (!state.session) return null;
@@ -162,7 +186,9 @@
   }
   function finishSession() {
     var s = state.session;
-    if (!s) return;
+    // Сессию можно «переиграть» назад и вперёд — в историю она попадает один раз.
+    if (!s || s.finished) return;
+    s.finished = true;
     var correct = 0;
     s.ids.forEach(function (id) { if (s.answers[id] && s.answers[id].correct) correct++; });
     state.sessions.unshift({ id: Date.now(), at: Date.now(), correct: correct, total: s.ids.length, label: s.label, mode: s.mode });
@@ -185,11 +211,35 @@
     record(card, correct);
     render();
   }
+  /* Возврат из тренировки одного препарата в ту сессию, из которой её
+     запустили. Родительская сессия сохранена целиком: тот же вопрос, те же
+     ответы и подсказки, поэтому возвращаешься ровно туда, где был. */
+  function hasParent(s) { return !!(s && s.parent && s.parent.from === 'session' && s.parent.session); }
+  function parentLabel(s) { return hasParent(s) ? (s.parent.session.label || '') : ''; }
+  function backToParent() {
+    var s = state.session, p = s && s.parent;
+    if (!p || p.from !== 'session' || !p.session) return false;
+    state.session = p.session;
+    save();
+    if (route() !== 'train') go('train'); else render(true);
+    toast('Вернулись к прошлой тренировке');
+    return true;
+  }
   function next() {
     var s = state.session;
     if (!s) return;
     s.idx += 1;
     if (s.idx >= s.ids.length) finishSession();
+    save(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  /* Шаг назад: ответ на предыдущий вопрос не стирается — он уже учтён в
+     статистике. Вернувшись, видно свой ответ и разбор, а «Далее» ведёт обратно.
+     Если сессия завершена, шаг назад оживляет последний вопрос. */
+  function prev() {
+    var s = state.session;
+    if (!s || s.idx <= 0) return;
+    s.idx -= 1;
+    if (s.finished) s.finished = false;   // вернулись из итогов — сессия живая
     save(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -263,7 +313,7 @@
           '</div>' +
           '<h3 style="font-size:.9rem;margin-bottom:9px">Последние сессии</h3>' +
           (last.length ? last.map(function (s) {
-            return '<div class="summary-line"><span>' + esc(s.label) + ' · ' + fmtDate(s.at) + '</span><span>' + s.correct + ' / ' + s.total + '</span></div>';
+            return '<div class="summary-line"><span>' + esc(s.label) + ' · ' + fmtDate(s.at) + '</span><span class="summary-line__num">' + s.correct + ' / ' + s.total + '</span></div>';
           }).join('') : '<p class="muted" style="font-size:.85rem">Сессий ещё не было.</p>') +
           '<div style="margin-top:16px"><a class="btn btn--sm" href="#/stats">Вся статистика →</a></div>' +
         '</section>' +
@@ -312,7 +362,7 @@
           '<div class="summary-line"><span>Перемешивать</span><span>' + (st.shuffle ? 'да' : 'нет') + '</span></div>' +
           '<button type="button" class="btn btn--sm" data-action="toggle-shuffle" style="margin-top:10px;width:100%">' + (st.shuffle ? 'Не перемешивать' : 'Перемешивать') + '</button>' +
           '<button type="button" class="btn btn--primary" data-action="start" style="margin-top:14px;width:100%">Начать →</button>' +
-          '<p class="muted" style="font-size:.76rem;margin-top:12px">Горячие клавиши: <span class="kbd">1</span>–<span class="kbd">4</span> — ответ, <span class="kbd">H</span> — подсказка, <span class="kbd">F</span> — избранное, <span class="kbd">Z</span> — увеличить.</p>' +
+          '<p class="muted" style="font-size:.76rem;margin-top:12px">Горячие клавиши: <span class="kbd">1</span>–<span class="kbd">4</span> — ответ, <span class="kbd">H</span> — подсказка, <span class="kbd">F</span> — избранное, <span class="kbd">Z</span> — увеличить, <span class="kbd">←</span> — назад.</p>' +
         '</aside>' +
       '</div>';
   }
@@ -331,19 +381,32 @@
         '<img src="' + esc(card.clean) + '" alt="Микропрепарат без подписей" loading="eager">' +
         '<span class="quiz__zoomhint">Нажмите, чтобы увеличить</span>' +
       '</div>' +
-      '<div class="quiz__meta"><div class="chip-row">' + badge(g) + maskBadge(card) +
+      // Номер препарата — часть ответа: в вопросе его не показываем.
+      '<div class="quiz__meta"><div class="chip-row">' + (mentionsAnswer(sys.title, g) ? '' : '<span class="badge">' + esc(sys.title) + '</span>') + maskBadge(card) +
         '<span class="badge">' + esc(card.source) + '</span></div>' +
         '<button type="button" class="btn btn--sm btn--ghost" data-action="favorite">' + (p.favorite ? '★ В избранном' : '☆ В избранное') + '</button></div>' +
       '</section>';
 
     var right = '<section class="card card--pad">' +
       '<div class="quiz__progress"><i style="width:' + pct(s.idx, s.ids.length) + '%"></i></div>' +
-      '<div class="quiz__top"><span class="quiz__count">Вопрос ' + (s.idx + 1) + ' из ' + s.ids.length + '</span><span class="badge">' + esc(s.label) + '</span></div>' +
+      '<div class="quiz__top">' +
+        '<div class="quiz__nav">' +
+          (hasParent(s)
+            ? '<button type="button" class="btn btn--sm btn--ghost quiz__prev" data-action="back-to-parent" title="Прервать эту тренировку и вернуться к прошлой">← К прошлой тренировке</button>'
+            : '<button type="button" class="btn btn--sm btn--ghost quiz__prev" data-action="prev"' + (s.idx > 0 ? '' : ' disabled') + ' title="Вернуться к предыдущему вопросу (←)">← Назад</button>') +
+          '<span class="quiz__count">Вопрос ' + (s.idx + 1) + ' из ' + s.ids.length + '</span>' +
+        '</div><span class="badge">' + esc(s.label) + '</span></div>' +
       '<div class="quiz__question">Что за препарат на снимке?</div>' +
-      '<div class="quiz__sub">' + (hinted ? 'Подсказка: ' + esc(sys.title) + ' · окраска ' + esc(g.stain) + (g.number ? ' · № ' + esc(g.number) : '') : 'Ориентируйтесь на структуру ткани и окраску.') + '</div>';
+      '<div class="quiz__sub">' + (hinted ? 'Подсказка: ' + esc(systemHint(sys, g)) + ' · окраска ' + esc(g.stain) : 'Ориентируйтесь на структуру ткани и окраску.') + '</div>';
 
     if (hinted && !ans) {
-      right += '<div class="hintbox"><strong>Первые буквы:</strong> ' + esc(maskTitle(g)) + '<br><span style="opacity:.85">' + esc(sys.title) + (g.number ? ' · препарат № ' + esc(g.number) : '') + ' · ' + esc(g.stain) + '</span></div>';
+      // В режиме выбора маска букв — это готовый ответ: из четырёх вариантов
+      // она совпадает ровно с одним. Там подсказываем описанием структуры.
+      // Система и окраска уже стоят в quiz__sub — в плашке они не нужны.
+      var hintText = s.mode === 'choice'
+        ? esc(hintClue(g))
+        : '<strong>Первые буквы:</strong> ' + esc(maskTitle(g));
+      right += '<div class="hintbox">' + hintText + '</div>';
     }
 
     if (!ans) {
@@ -364,14 +427,21 @@
         '<div class="feedback__head"><span class="dot">' + (ok ? '✓' : '×') + '</span>' + (ok ? 'Верно' : 'Неверно') + '</div>' +
         '<div class="feedback__answer">' + esc(g.title) + '</div>' +
         '<div class="feedback__chips"><span class="badge">' + esc(sys.title) + '</span> <span class="badge">' + esc(g.stain) + '</span>' + (g.number ? ' <span class="badge">№ ' + esc(g.number) + '</span>' : '') + '</div>' +
-        '<p class="feedback__desc" style="margin-top:10px">' + esc(g.hint) + '</p>' +
+        // Описание показываем целиком: раньше оно стояло одной строкой с
+        // многоточием от короткой подсказки, и разбор после ответа обрывался.
+        '<p class="feedback__desc" style="margin-top:10px">' + esc(descFor(g)) + '</p>' +
         '<div class="feedback__actions">' +
-          (card.reveal ? '<button type="button" class="btn btn--sm" data-action="toggle-reveal">' + (revealed ? 'Скрыть подписи' : 'Показать подписанный снимок') + '</button>' : '') +
-          '<button type="button" class="btn btn--sm" data-action="train-group">Тренировать этот препарат</button>' +
+          (revealFor(card) ? '<button type="button" class="btn btn--sm" data-action="toggle-reveal">' + (revealed ? 'Скрыть подписи' : 'Показать подписанный снимок') + '</button>' : '') +
+          '<button type="button" class="btn btn--sm" data-action="train-group" data-gid="' + esc(card.groupId) + '">Тренировать этот препарат</button>' +
         '</div>' +
-        (revealed && card.reveal ? '<div class="reveal"><img src="' + esc(card.reveal) + '" alt="Подписанный вариант препарата"><p class="muted" style="font-size:.76rem;margin-top:6px">Исходный слайд с подписями — для разбора.</p></div>' : '') +
+        (revealed && revealFor(card) ? '<div class="reveal" data-action="zoom" data-src="' + esc(revealFor(card)) + '" data-cap="' + esc(g.title) + ' · подписанный слайд"><img src="' + esc(revealFor(card)) + '" alt="Подписанный вариант препарата">' +
+          '<p class="reveal__cap"><span>С подписями — нажмите, чтобы увеличить</span><span class="badge">разбор</span></p></div>' : '') +
       '</div>' +
-      '<div class="quiz__bottom"><span class="muted" style="font-size:.8rem">' + esc(card.source) + '</span>' +
+      '<div class="quiz__bottom"><div class="quiz__bottom-nav">' +
+        // Кнопка «Назад» была только до ответа: после разбора вернуться к
+        // предыдущему вопросу было нечем, кроме клавиши ←.
+        (s.idx > 0 ? '<button type="button" class="btn btn--sm quiz__prev" data-action="prev" title="Вернуться к предыдущему вопросу (←)">← Назад</button>' : '') +
+        '<span class="muted" style="font-size:.8rem">' + esc(card.source) + '</span></div>' +
         '<button type="button" class="btn btn--primary" data-action="next">' + (s.idx + 1 >= s.ids.length ? 'Завершить →' : 'Следующий →') + '</button></div>';
     }
     right += '</section>';
@@ -385,6 +455,300 @@
       return /[a-zа-я0-9]/i.test(ch) && i > 1 && i % 3 !== 0 ? '_' : ch;
     }).join('');
   }
+  /* Названия препарата в разных видах: нужно, чтобы вычистить их из описания.
+     Половина описаний в PDF начинается с «Препарат № N. <название>. ...». */
+  function keyOf(s) {
+    return String(s || '').toLowerCase().replace(/ё/g, 'е')
+      .replace(/[^a-zа-я0-9]+/g, ' ').trim();
+  }
+  function titlePaths(g) {
+    var out = [];
+    function push(s) {
+      s = String(s || '').replace(/\s+/g, ' ').trim();
+      if (keyOf(s).replace(/[^a-zа-я0-9]/g, '').length < 4) return;
+      for (var i = 0; i < out.length; i++) {
+        if (keyOf(out[i]) === keyOf(s)) return;
+      }
+      out.push(s);
+    }
+    push(g.title);
+    push(shortTitle(g));
+    // Содержимое скобок бывает уточнением с союзом («Плацента (плодная и
+    // материнская части)») — тогда его части тоже называют препарат.
+    var m = /\(([^)]+)\)/.exec(g.title || '');
+    // «(поперечный срез)», «(мазок)», «(срез яичника кошки)» — это не название, а
+    // описание снимка: вырезать его из текста подсказки незачем.
+    var GENERIC = /срез|разрез|мазок|стади|окраск|поперечн|продольн|светов(ая|ой)|гистолог/i;
+    if (m && !GENERIC.test(m[1])) {
+      push(m[1]);
+      String(m[1]).split(/\s+(?:и|или)\s+/).forEach(push);
+    }
+    return out;
+  }
+  /* Подсказка, которая не выдаёт ответ. Из описания убираются название
+     препарата, его номер и служебные «Раздел:»/«Окраска:»; остаётся рассказ о
+     том, что видно на срезе. Название вычищается по словам и с учётом
+     словоформ: иначе «Печень свиньи» превращалась бы в «и» посреди фразы, а
+     «Волокна Пуркинье» оставались бы в тексте. Уцелевшие обрывки («…зёнка»,
+     «(нижний мозговой придаток)…») отбрасываются: из нескольких предложений
+     собирается связный текст. Если осмысленного описания нет — подсказка
+     говорит о структурах, не называя орган. */
+  var HINT_FALLBACK = 'Сравните форму, границы и взаимное расположение структур на срезе.';
+  var SYSTEM_SCOPE = {
+    nervous: 'нервной ткани', sense: 'органов чувств', cardio: 'сосудистой стенки',
+    endocrine: 'железистой ткани', immune: 'лимфоидной ткани', digestive: 'слизистой оболочки',
+    respiratory: 'дыхательных путей', urinary: 'мочевыделительной системы',
+    reproductive: 'половой системы', skin: 'кожи', tooth: 'формирующегося зуба',
+    embryo: 'эмбриональных тканей'
+  };
+  /* Основа слова: «пуркинье» ≈ «пуркинье», «волокна» ≈ «волокон», «печени» ≈ «печень». */
+  function stemOf(w) {
+    if (w.length <= 3) return w;
+    return w.length <= 6 ? w.slice(0, 4) : w.slice(0, w.length - 2);
+  }
+  function sameWord(a, b) {
+    if (a === b) return true;
+    if (a.length < 4 || b.length < 4) return false;
+    var x = stemOf(a), y = stemOf(b);
+    return x === y || (x.length >= 4 && y.indexOf(x) === 0) || (y.length >= 4 && x.indexOf(y) === 0);
+  }
+  /* Удаляет из текста фразу по словам, не разрезая соседние слова. */
+  function cutPhrase(text, phrase) {
+    var parts = keyOf(phrase).split(' ').filter(Boolean);
+    if (!parts.length) return text;
+    var tokens = String(text).split(/(\s+)/);
+    var pos = [], words = [];
+    for (var i = 0; i < tokens.length; i += 2) {
+      if (!tokens[i]) continue;
+      pos.push(i);
+      words.push(keyOf(tokens[i]).replace(/[^a-zа-я0-9]/g, ''));
+    }
+    for (var k = 0; k + parts.length <= words.length; k++) {
+      var match = true;
+      for (var j = 0; j < parts.length; j++) {
+        if (!sameWord(words[k + j], parts[j])) { match = false; break; }
+      }
+      if (!match) continue;
+      var gap = pos[k] > 0 && /\W$/.test(tokens[pos[k] - 1] || '');
+      var atStart = /(^|[.!?]\s+)$/.test(tokens.slice(0, pos[k]).join('').trim());
+      for (var m = 0; m < parts.length; m++) tokens[pos[k + m]] = ' ';
+      var out = tokens.join('').replace(/\s+([.,;:])/g, '$1').replace(/[ \t]{2,}/g, ' ');
+      // Если название стояло в начале фразы, забираем и его инициал.
+      if (gap) out = out.replace(/(^|[.!?]\s+)[а-яё]\s+/g, '$1');
+      // «На срезе видно покрытый белочной оболочкой» — предлог, который
+      // относился к вырезанному названию, оставляет фразу без дополнения.
+      if (atStart) out = out.replace(
+        /^\s*(на|в|во|с|со|из|от|о|об|обо|по|при|для|к|ко|у|над|под|за|до|про|через)\s+/i, '');
+      return out;
+    }
+    return text;
+  }
+  /* Слово встречается в названии только одного препарата — значит, по нему
+     можно узнать ответ. */
+  function isDistinctWord(word) {
+    var stem = stemOf(word), hits = 0;
+    for (var i = 0; i < groups.length; i++) {
+      var t = keyOf(groups[i].title).split(' ');
+      for (var j = 0; j < t.length; j++) {
+        if (t[j].length >= 6 && t[j].indexOf(stem) === 0) { hits++; break; }
+      }
+      if (hits > 1) return false;
+    }
+    return hits === 1;
+  }
+  function hintClue(g) {
+    // В текстах из PDF встречаются неразрывные пробелы и мягкие переносы — они
+    // ломают и сравнение слов, и границы предложений.
+    var raw = String(g.hint || '')
+      .replace(/[\u00a0\u202f\u2009\u2007]/g, ' ')
+      .replace(/[\u00ad\u2010\u2011\ufe63]/g, '-')
+      .replace(/\s+/g, ' ').trim();
+
+    // Служебная шапка («ОКРАСКА ГЕМАТОКСИЛИНОМ И ЭОЗИНОМ», «Раздел: …») часто
+    // приклеена к первому предложению без точки — отделяем её заранее.
+    raw = raw.replace(/\s+(?=(ОКРАСКА|ОКРАШИВАНИЕ|РАЗДЕЛ|ПРЕПАРАТ|Препарат|Окраска|Раздел|Общая характеристика)(?![а-яёa-z]))/g, '. ');
+    raw = raw.replace(/Гематоксилин\s*[-–—]\s*эозин(?![а-яёa-z])/gi, ' ');
+    raw = raw.replace(/(?<![а-яёa-z])(ОКРАСКА|ОКРАШИВАНИЕ)(?![а-яёa-z])/gi, '. $1');
+    raw = raw.replace(/(срез)(?=(артери|вен|нерв|капилляр))/gi, '$1 ');
+    raw = raw.replace(/\s+/g, ' ').trim();
+
+    // Название препарата в начале предложения — это заголовок слайда: вместе с
+    // ним уходит и сказуемое, такой кусок не спасти. Убираем целиком. Если
+    // название стоит в середине фразы, вырезаем только его.
+    // Исходные (необрезанные) предложения: если из-за вырезанного названия
+    // фраза рассыпается — «клетки, светлые пенистые, почти пустые, т.к.» —
+    // лучше взять её целиком, со скобками: «клетки крупные, светлые (пенистые,
+    // почти пустые, т.к. липиды вымыты)». Ключ — обрезанная версия.
+    var hintRawSentences = {};
+    // Точка внутри «т.к.» и «т.е.» разрезает предложение пополам — прячем её
+    // за плейсхолдер до разбиения и возвращаем в собранном тексте.
+    var ABBR = '\u0001';
+    var src = raw.replace(/т\.\s*([ке])\./gi, 'т' + ABBR + '$1' + ABBR);
+    var sentences = src.split(/(?<=[.!?…])\s+/).map(function (x) {
+      return x.replace(/^\s*\d+[.)]\s*/, '').replace(/^[\s.,;:—–-]+/, '').trim();
+    }).filter(Boolean).map(function (st) {
+      var head = /^([^,.:;]{0,40})/.exec(st)[0];
+      var lead = keyOf(head).split(' ').filter(Boolean);
+      var title = keyOf(st).split(' ').filter(Boolean);
+      var names = titlePaths(g).map(function (n) {
+        return keyOf(n).split(' ').filter(Boolean);
+      });
+      var opensWithName = names.some(function (p) {
+        if (!p.length || p.length > lead.length) return false;
+        for (var i = 0; i < p.length; i++) {
+          if (!sameWord(lead[i], p[i]) && lead[i].indexOf(stemOf(p[i])) !== 0) return false;
+        }
+        return true;
+      });
+      if (opensWithName) return '';
+      var t = st;
+      for (var pass = 0; pass < 3; pass++) {
+        var before = t;
+        titlePaths(g).forEach(function (name) { t = cutPhrase(t, name); });
+        if (t === before) break;
+      }
+      if (t !== st) hintRawSentences[t] = st;
+      return t;
+    }).filter(Boolean);
+
+    var kept = [];
+    sentences.forEach(function (st) {
+      var t = st
+        .replace(/^\s*(ГЕМАТОКСИЛИН|ЭОЗИН|ПИКРОФУКСИН|КОНГОРОТ|ИМПРЕГНАЦ)\w*[^.]*\.?\s*/i, '')
+        .replace(/(^|[\s.;])(Раздел|Окраска|Препарат)(?![а-яёa-z])\s*:[^.]*\.?/gi, '$1')
+        .replace(/(^|[\s.;])ОКРАСКА(?![а-яёa-z])[^.]*\.?/gi, '$1')
+        .replace(/^\s*Общая характеристика\s*:\s*/i, '')
+        .replace(/^\s*(Локализация|Строение|Функция|Состав|Расположение)\s*:\s*/i, '')
+        .replace(/^\s*Важный момент\s*:\s*/i, '')
+        .replace(/\s*[•·]\s*/g, ' ')
+        .replace(/\s+/g, ' ').replace(/^[\s.,;:—–-]+/, '').trim();
+      if (t && /^[а-яё]/.test(t)) t = t.charAt(0).toUpperCase() + t.slice(1);
+      // В скобках PDF часто уточнение, без которого фраза рвётся: «клетки,
+      // светлые пенистые, почти пустые, т.к.» — это «(пенистые, почти пустые,
+      // т.к. липиды вымыты)» без самого уточнения. Если обрезка названия
+      // сломала фразу, берём её целиком из исходного текста, со скобками.
+      var whole = hintRawSentences[t] || '';
+      if (whole && /т\.\s*[ке]\.?\s*$|[(\u2014-]\s*$|\u2026\s*$/i.test(t)) t = whole;
+      if (mentionsAnswer(t, g)) return;
+      if (!isCleanSentence(t)) return;
+      kept.push(t);
+    });
+
+    // «Они собраны в пучки…», «Она состоит из…» — подлежащее осталось в
+    // предыдущем (вырезанном) предложении, читается как обрывок.
+    kept = kept.filter(function (x) {
+      // «Они собраны…» — подлежащее осталось в вырезанном предложении;
+      // «Это позволяет…» — отсылка к тому, чего в подсказке уже нет.
+      if (/^(Он|Она|Они|Оно|Его|Её|Их)\s+[а-яё]/i.test(x)) return false;
+      if (/^Это\s+(позволяет|даёт|видно|объясняется)/i.test(x)) return false;
+      // «На срезе видно покрытый … оболочкой» — дополнением было название.
+      if (/^(На\s+(срезе|снимке|препарате)\s+(виден|видна|видно|видны)\s+)?(покрыт|состоит|представлен|образовани|называем)\w*/i.test(x)) return false;
+      // «Формируется состоящий из нескольких клеточных слоёв» — то же самое:
+      // дополнение ушло, причастие повисло.
+      if (/^(Формируется|Формируются|Образуется|Образуются|Виден|Видна|Видно|Видны)\s+(состоящ|представл|покрыт|образован)\w*/i.test(x)) return false;
+      return true;
+    });
+    // Короткие обрывки по краям вырваны из контекста («…жировая ткань.»).
+    while (kept.length > 1 && kept[0].replace(/[^a-zа-яё0-9]/gi, '').length < 30) kept.shift();
+    while (kept.length > 1 &&
+           kept[kept.length - 1].replace(/[^a-zа-яё0-9]/gi, '').length < 30) kept.pop();
+
+    // Последнюю фразу не обрываем на «т.к.», «которые», предлоге — она
+    // читается как незаконченная. Лучше закончить на предыдущей.
+    while (kept.length > 1 && !/[.!?…]$/.test(kept[kept.length - 1])) kept.pop();
+    if (kept.length > 1) {
+      var tail = kept[kept.length - 1];
+      var lastWord = tail.replace(/[.!?…;:,]+$/, '').split(/\s+/).pop().toLowerCase();
+      if (/т\.\s*к\.?/i.test(tail) || /т\.\s*е\.?/i.test(tail) ||
+          /^(в|во|на|с|со|из|от|до|по|при|для|к|ко|у|над|под|за|про|через|и|а|но|или|что|как|котор\w*)$/.test(lastWord)) {
+        kept.pop();
+      }
+    }
+
+    // Длина — по целым фразам: многоточие на полуслове читается как обрыв.
+    while (kept.length > 1 && kept.join(' ').length > 260) kept.pop();
+
+    var out = kept.join(' ').replace(/\s+/g, ' ').trim();
+    out = out.replace(/(?<![А-Яа-яЁёA-Za-z])\([^)]*\b(Tunica|Stratum|Papillae|Cryptae|gemmae|scala|stratum|Folliculi|Epidermis|Cortex|lobuli)\b[^)]*\)/g,
+      function (m) { return m; })
+      .replace(/\s*\)\s*/g, ' ')
+      .replace(/\s*\(\s*/g, ' ')
+      .replace(/(?<![а-яёa-z])ткань,\s*(заполняет|образует|состоит)/gi, 'ткань $1')
+      // Обрывки, оставшиеся от вырезанного названия в середине фразы:
+      // «Жёлтое тело … из лютеиновых клеток желточных», «… состоящий из»,
+      // «… покрытый белочной оболочкой».
+      .replace(/\s+(из|состоящий|состоящая|покрытый|покрытая|представлен\w*|образованный|называем\w*)\s*\./gi, '.')
+      .replace(/,\s*(из|состоящий|состоящая|покрытый|покрытая)\s*\./gi, '.')
+      // «Состоит из лютеиновых клеток желточных, разделённых…» — прилагательное
+      // без своего существительного (оно ушло вместе с названием препарата).
+      .replace(/(клеток|клетками|клетки|волокон|волокна|ткани|тканей)\s+([а-яё]+(?:ых|ыми|ые|ой|ая|ое))(?=[\s,.])/gi,
+        function (m, noun) { return /(ых|ыми|ые|ой|ая|ое)$/.test(noun) ? m : noun; })
+      .replace(/\(\s*[,;:]\s*/g, '(').replace(/\(\s*\)/g, ' ')
+      .replace(/\s*\(\s*(?=[.,;:]|$)/g, '')
+      .replace(/\(\s*([.,;:]|$)/g, '$1').replace(/\)\s*,/g, '),')
+      .replace(/[;,]\s*\./g, '.').replace(/\.\s*\./g, '.')
+      .replace(/\s+([.,;:])/g, '$1').replace(/\s{2,}/g, ' ')
+      .replace(/^[\s.,;:—–-•·]+/, '').replace(/[\s,;:—–-]+$/, '').trim();
+    out = out.replace(/\u0001/g, '.');
+    if (out && !/[.!?…]$/.test(out)) out += '.';
+    if (out.replace(/[^a-zа-яё0-9]/gi, '').length < 40) {
+      out = 'На снимке — участок ' + (SYSTEM_SCOPE[g.system] || 'ткани') + '. ' + HINT_FALLBACK;
+    }
+    return out;
+  }
+
+  /* Название раздела иногда само содержит ответ: раздел «Плацента и
+     эмбриональные ткани» однозначно указывает на плаценту. В таком случае
+     показываем нейтральную подпись. */
+  function systemHint(sys, g) {
+    return mentionsAnswer(sys.title, g) ? 'Раздел скрыт' : sys.title;
+  }
+  /* Встречается ли в тексте название препарата — в том числе внутри слова
+     («аденогипофиз» для «Гипофиз», «двенадцатиперстной» для «12-перстная кишка»). */
+  function mentionsAnswer(text, g) {
+    var words = keyOf(text).split(' ').filter(Boolean);
+    var paths = titlePaths(g).map(function (n) {
+      var words = keyOf(n).split(' ').filter(function (w) { return w.length >= 4; });
+      // Главное слово названия тоже выдаёт ответ («миндалина» в «Нёбная миндалина»),
+      // но только если оно отличает препарат от остальных: «желудка» есть и у
+      // «Фундального отдела», и у «Пилорической части», поэтому не считается.
+      var head = words[words.length - 1];
+      if (words.length > 1 && head && head.length >= 6 && isDistinctWord(head)) words = [head];
+      return words;
+    });
+    for (var i = 0; i < paths.length; i++) {
+      var p = paths[i];
+      if (!p.length) continue;
+      for (var k = 0; k + p.length <= words.length; k++) {
+        var ok = true;
+        for (var j = 0; j < p.length; j++) {
+          var w = words[k + j], q = p[j];
+          if (!sameWord(w, q) && w.indexOf(stemOf(q)) !== 0) { ok = false; break; }
+        }
+        if (ok) return true;
+      }
+    }
+    return false;
+  }
+  /* Годится ли предложение в подсказку: не начинается с обрывка, не служебное,
+     содержит достаточно слов и хотя бы одно «тканевое» слово. Первое
+     предложение описания часто бывает без подлежащего — его удаление при
+     вычистке названия даёт «резе на жёлто-коричневом фоне…», поэтому такие
+     обрывки отсеиваются по отсутствию ключевого слова. */
+  /* Зачины, которые сами по себе осмысленны и не являются обрывком. */
+  var ORPHAN_OK = /^(Стенка|Слизистая|Железистые|Паренхима|Корковое|Мозговое|Капсула|Ворсины|Крипты|Слои|Клетки|Эпидермис|Дерма|Три|Два|Орган|Органы|Железа|Кость|Зуб|Трубка|Сосуд|Нерв|Мышца|Кожа|Язык|Пищевод|Желудок|Кишка|Печень|Почка|Лёгкое|Сердце|Матка|Яичник|Семенник|На|В|По|Из|С|У|При|Для|От|До|Под|Над|Между|Здесь|Строение|Снаружи|Изнутри|Вокруг|Часть|Ворсин|Оболочка|Снимке)(?![а-яё])/;
+  var HINT_KEYWORDS = /(сло|оболоч|клет|ткан|канал|ядр|капсул|дольк|фолликул|ворсин|крипт|сосочк|эпител|мыш|сосуд|волокн|мембран|стром|паренхим|желез|проток|синус|просвет|цитоплазм|мозгов|корков|вестибул|костн|хрящ|ретикул|коллаген|эластич|сероз|слизист)/i;
+  function isCleanSentence(s, minLetters) {
+    if (!s) return false;
+    var letters = s.replace(/[^a-zа-яё0-9]/gi, '').length;
+    if (letters < (minLetters || 10)) return false;
+    if (!/^[A-Z0-9ЁА-Я«"•\-–—]/.test(s)) return false;
+    if (!HINT_KEYWORDS.test(s)) return false;
+    if (/^\d+[.)]?\s*$/.test(s)) return false;
+    if (letters / s.length < 0.5) return false;
+    return true;
+  }
+
   function renderDone() {
     var s = state.session;
     var correct = 0;
@@ -396,11 +760,17 @@
       '<h1 style="font-size:1.8rem">Сессия завершена</h1>' +
       '<p class="muted" style="margin-top:8px">' + correct + ' верных из ' + s.ids.length + ' · ' + esc(s.label) + '</p>' +
       '<div class="hero__actions" style="justify-content:center">' +
-        '<button type="button" class="btn btn--primary" data-action="restart">Ещё раз</button>' +
+        (hasParent(s) ? '<button type="button" class="btn btn--primary" data-action="back-to-parent">← Вернуться к тренировке' +
+          (parentLabel(s) ? ' «' + esc(parentLabel(s)) + '»' : '') + '</button>' : '') +
+        '<button type="button" class="btn' + (hasParent(s) ? '' : ' btn--primary') + '" data-action="restart">Ещё раз</button>' +
         (wrong.length ? '<button type="button" class="btn" data-action="repeat-wrong">Повторить ошибки (' + wrong.length + ')</button>' : '') +
         '<a class="btn btn--ghost" href="#/atlas">В атлас</a>' +
       '</div>' +
-      '<div style="margin-top:22px"><button type="button" class="btn btn--sm btn--ghost" data-action="new-session">Новая настройка</button></div>' +
+      '<div class="session-done__more">' +
+        // «Новая настройка» была неприметной ghost-кнопкой, хотя нужна чаще
+        // всего: после итогов хочется просто начать новую тренировку.
+        '<button type="button" class="btn btn--primary" data-action="new-session">Новая тренировка</button>' +
+        '<button type="button" class="btn btn--sm btn--ghost" data-action="prev">← К последнему вопросу</button></div>' +
     '</div>';
   }
   function renderTrain() {
@@ -422,32 +792,161 @@
     var body = systems.filter(function (s) { return bySys[s.id] && bySys[s.id].length; }).map(function (s) {
       return '<section class="atlas-group"><div class="atlas-group__head"><span class="badge badge--dot" style="color:' + s.color + '">' + esc(s.title) + '</span><span class="count">' + bySys[s.id].length + ' препаратов</span></div>' +
         '<div class="atlas-grid">' + bySys[s.id].map(function (g) {
-          var cs = cardsByGroup[g.id] || [], first = cs[0];
+          var cs = cardsByGroup[g.id] || [];
           var seen = cs.filter(function (c) { return state.progress[c.id] && state.progress[c.id].seen > 0; }).length;
+          var count = cs.filter(function (c) { return !c.masked; }).length || cs.length;
           return '<article class="prep-card" data-action="open-group" data-gid="' + g.id + '">' +
-            '<div class="prep-card__img"><img src="' + esc(first ? first.clean : '') + '" alt="" loading="lazy"></div>' +
-            '<div class="prep-card__body"><h3>' + esc(g.title) + '</h3><div class="prep-card__meta">' + badge(g) + '<span class="badge">' + cs.length + ' снимков</span></div>' +
+            '<div class="prep-card__img"><img src="' + esc(atlasCover(g.id)) + '" alt="" loading="lazy"></div>' +
+            '<div class="prep-card__body"><h3>' + esc(g.title) + '</h3><div class="prep-card__meta">' + badge(g) + '<span class="badge">' + count + ' снимков</span></div>' +
             '<div class="prep-card__stats">Пройдено ' + seen + ' / ' + cs.length + ' · ' + esc(g.stain) + '</div></div></article>';
         }).join('') + '</div></section>';
     }).join('');
-    return '<div class="page-head"><div><div class="page-head__eyebrow">Коллекция</div><h1>Атлас препаратов</h1><p>Все снимки разложены по разделам. Нажмите на препарат, чтобы посмотреть чистые и подписанные варианты.</p></div></div>' +
+    return '<div class="page-head"><div><div class="page-head__eyebrow">Коллекция</div><h1>Атлас препаратов</h1><p>Все снимки разложены по разделам. Нажмите на препарат: там теория — что смотреть на срезе, — и снимки с подписями.</p></div></div>' +
       '<div class="atlas-tools"><input type="search" id="atlasSearch" placeholder="Поиск по названию, номеру или окраске…" value="' + esc(atlasQuery) + '">' +
       '<div class="chip-row"><button type="button" class="chip' + (atlasSystem === 'all' ? ' is-on' : '') + '" data-action="atlas-system" data-sid="all">Все разделы</button>' +
       systems.map(function (s) { return '<button type="button" class="chip' + (atlasSystem === s.id ? ' is-on' : '') + '" data-action="atlas-system" data-sid="' + s.id + '">' + esc(s.title) + '</button>'; }).join('') + '</div></div>' +
       (body || '<div class="empty"><div class="empty__icon">🔍</div><h3>Ничего не найдено</h3><p>Попробуйте другой запрос или сбросьте фильтр раздела.</p></div>');
   }
+  /* Обложка препарата в атласе: сначала чистый кадр, потом подписанный слайд.
+     Замазанный кадр на обложке смотрелся бы как испорченный снимок, а он нужен
+     только там, где других снимков у препарата нет. */
+  function atlasCover(gid) {
+    var cs = cardsByGroup[gid] || [];
+    var clean = cs.filter(function (c) { return !c.masked; })[0];
+    if (clean) return clean.clean;
+    var signed = cs.filter(function (c) { return c.reveal; })[0];
+    return signed ? signed.reveal : (cs[0] ? cs[0].clean : '');
+  }
+  /* Есть ли у препарата снимок, снятый без подписей. У 28 групп таких нет
+     вовсе: в PDF только слайд с подписями, и единственный способ показать
+     структуру без них — замазанный кадр. */
+  function hasClean(gid) {
+    return (cardsByGroup[gid] || []).some(function (c) { return !c.masked; });
+  }
+  /* Теория препарата: проза PDF режется на пункты по номерам слоёв, по
+     предложениям с двоеточием-зачином («Эндотелий: …») и просто по точкам.
+     Так текст читается списком, а не простынёй. */
+  function theoryBlocks(g) {
+    var raw = String(g.theory || g.hint || '')
+      .replace(/[\u00a0\u202f\u2009\u2007]/g, ' ')
+      .replace(/\s+/g, ' ').trim()
+      // Служебные зачины абзацев в PDF — не отдельные пункты.
+      .replace(/^(Общая характеристика|Описание|Строение)\s*:\s*/i, '')
+      .replace(/\s(Общая характеристика|Описание)\s*:\s*/gi, ' ');
+    if (!raw) return [];
+    // «1. Эндокард … 2. Миокард …» — каждый пункт с новой строки.
+    raw = raw.replace(/(?:^|\s)(\d{1,2})\s*\.\s*(?=[А-ЯЁA-Zа-яё])/g, '\n$1. ');
+    var blocks = [];
+    raw.split('\n').forEach(function (chunk) {
+      chunk = chunk.replace(/^[\s.,;:—–-]+/, '').trim();
+      if (!chunk) return;
+      // Фраза с зачином и двоеточием идёт отдельным пунктом вместе с
+      // продолжением, пока не кончится следующая «заголовочная» фраза.
+      var parts = chunk.split(/(?<=[.!?…])\s+(?=[А-ЯЁA-Z])/);
+      var cur = '';
+      parts.forEach(function (x) {
+        if (!cur) { cur = x; return; }
+        var isTerm = /^[А-ЯЁA-Z][^.!?…]{2,60}:/.test(x) || /^\d{1,2}\./.test(x);
+        // Длинный абзац без заголовков режем по границам предложений, иначе
+        // вся теория глазами читается одной простынёй.
+        var tooLong = cur.length > 220;
+        if (isTerm || tooLong) { blocks.push(cur); cur = x; }
+        else cur += ' ' + x;
+      });
+      if (cur) blocks.push(cur);
+    });
+    // Зачин-«шапка» без содержания («Слои (снаружи внутрь):») приклеиваем к
+    // следующему пункту, чтобы не висел отдельной строкой.
+    var merged = [];
+    blocks.forEach(function (b) {
+      var bare = /^[^.!?…]{3,60}:$/.test(b.trim());
+      if (bare && merged.length !== -1) {
+        if (!merged.length) merged.push(b.trim());
+        else merged[merged.length - 1] = merged[merged.length - 1];
+        return;
+      }
+      if (bare) return;
+      if (merged.length && /^[^.!?…]{3,60}:$/.test(merged[merged.length - 1].trim())) {
+        merged[merged.length - 1] = merged[merged.length - 1].replace(/:\s*$/, ': ') + b.trim();
+        return;
+      }
+      merged.push(b);
+    });
+    return merged.map(function (b) { return b.replace(/[;,]\s*$/, '').trim(); })
+      .filter(function (b) { return b.replace(/[^a-zа-яё0-9]/gi, '').length > 12; })
+      .slice(0, 14);
+  }
+  function theoryHtml(g) {
+    var blocks = theoryBlocks(g);
+    if (!blocks.length) return '';
+    return '<section class="theory"><h3 class="theory__head">Что смотреть</h3>' +
+      (hasClean(g.id) ? '' : '<p class="theory__note">В PDF у этого препарата нет снимка без подписей — ниже он с удалёнными подписями, рядом исходный слайд.</p>') +
+      '<ol class="theory__list">' + blocks.map(function (b) {
+        return '<li>' + esc(b) + '</li>';
+      }).join('') + '</ol></section>';
+  }
+  function sameText(a, b) {
+    var n = function (x) { return String(x || '').toLowerCase().replace(/[^a-zа-яё0-9]/g, ''); };
+    var x = n(a).replace(/…/g, ''), y = n(b);
+    if (!x || !y) return false;
+    return y.indexOf(x.slice(0, Math.min(80, x.length))) !== -1;
+  }
+  /* «Коротко» без обрыва: берём начало теории до последней целой фразы. */
+  /* Полное описание препарата для разбора после ответа. В манифесте лежит
+     подсказка (до 700 знаков) и теория (до 2600); для разбора годится теория,
+     но без служебной шапки вида «Препарат: … Окраска: …». */
+  function descFor(g) {
+    var t = String(g.theory || '').replace(/\s+/g, ' ').trim();
+    if (t.length < 80) t = String(g.hint || '').replace(/\s+/g, ' ').trim();
+    t = t.replace(/^(Общая характеристика|Описание|Строение)\s*:\s*/i, '');
+    return t;
+  }
+  function shortHint(g) {
+    var t = g.hintClue || '';
+    if (t) return t;
+    var raw = String(g.hint || g.theory || '').replace(/\s+/g, ' ').trim();
+    if (raw.length <= 300) return raw;
+    var cut = raw.slice(0, 300);
+    var end = Math.max(cut.lastIndexOf('.'), cut.lastIndexOf('!'), cut.lastIndexOf('?'));
+    if (end > 120) return cut.slice(0, end + 1);
+    var sp = cut.lastIndexOf(' ');
+    return cut.slice(0, sp > 0 ? sp : cut.length).replace(/[,;:—-]+$/, '') + '.';
+  }
   function openGroup(gid) {
-    var g = groupById[gid], cs = cardsByGroup[gid] || [], sys = systemById[g.system];
+    var g = groupById[gid], all = cardsByGroup[gid] || [], sys = systemById[g.system];
+    // В атласе — только чистые кадры и подписанные слайды: замазанный кадр
+    // нужен был ради тренировки, а тут рядом лежит тот же препарат с
+    // настоящими подписями, и выноски читаются.
+    var cs = all.filter(function (c) { return !c.masked; });
+    if (!cs.length) cs = all;          // у группы нет чистых кадров — показываем замазанные
+    // Один и тот же файл не должен попасть в галерею дважды. У групп без
+    // чистых кадров подписанный слайд раньше выводился и в паре со своим
+    // кадром, и ещё раз блоком «подписанные слайды других кадров».
+    var shown = {};
+    function shot(src, isMask, capLeft, capRight, badge) {
+      if (!src || shown[src]) return '';
+      shown[src] = true;
+      return '<div class="modal__shot"><img src="' + esc(src) + '" alt="' + esc(capLeft) + '" loading="lazy" data-action="zoom" data-src="' + esc(src) + '" data-cap="' + esc(g.title) + ' · ' + esc(capLeft) + '">' +
+        '<p><span>' + esc(capLeft) + '</span><span' + (badge === 'mask' ? ' class="badge badge--mask"' : '') + '>' + esc(capRight) + '</span></p></div>';
+    }
     var shots = cs.map(function (c) {
-      return '<div class="modal__shot"><img src="' + esc(c.clean) + '" alt="" loading="lazy" data-action="zoom" data-src="' + esc(c.clean) + '" data-cap="' + esc(g.title) + ' · ' + esc(c.source) + '">' +
-        '<p><span>' + esc(c.source) + '</span>' + (c.masked ? '<span class="badge badge--mask">подписи удалены</span>' : '') + '</p></div>' +
-        (c.reveal ? '<div class="modal__shot"><img src="' + esc(c.reveal) + '" alt="Подписанный вариант" loading="lazy" data-action="zoom" data-src="' + esc(c.reveal) + '" data-cap="' + esc(g.title) + ' · подписанный слайд"><p><span>С подписями</span><span>разбор</span></p></div>' : '');
+      var label = c.masked ? 'подписи удалены' : (c.reveal ? 'чистый кадр' : 'снимок');
+      return shot(c.clean, c.masked, c.source, label, c.masked ? 'mask' : '') +
+        (c.reveal ? shot(c.reveal, false, 'С подписями', 'разбор', '') : '');
     }).join('');
+    // Подписанные слайды остальных кадров группы — тоже часть атласа.
+    var extra = all.map(function (c) {
+      return c.reveal ? shot(c.reveal, false, 'С подписями', 'разбор', '') : '';
+    }).join('');
+    var countShots = Object.keys(shown).length;
     openModal('<div class="modal__head"><div><h2>' + esc(g.title) + '</h2><p>' + esc(sys.title) + ' · ' + esc(g.stain) + (g.number ? ' · препарат № ' + esc(g.number) : '') + ' · ' + esc(g.slides.join(', ')) + '</p></div><button class="modal__close" data-action="close-modal" aria-label="Закрыть">×</button></div>' +
-      '<div class="modal__body"><p style="font-size:.9rem;color:var(--text-2);margin-bottom:16px">' + esc(g.hint) + '</p>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px"><button type="button" class="btn btn--primary btn--sm" data-action="train-group-from" data-gid="' + gid + '">Тренировать этот препарат</button>' +
+      '<div class="modal__body">' + theoryHtml(g) +
+      // Подсказку показываем только если она не повторяет теорию: раньше тут
+      // стоял обрезанный на 260 знаках огрызок того же текста с многоточием.
+      (sameText(g.hint, g.theory) ? '' : '<p class="theory__hint">Коротко: ' + esc(shortHint(g)) + '</p>') +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 18px"><button type="button" class="btn btn--primary btn--sm" data-action="train-group-from" data-gid="' + gid + '">Тренировать этот препарат</button>' +
       '<button type="button" class="btn btn--sm" data-action="favorite-group" data-gid="' + gid + '">★ Добавить все в избранное</button></div>' +
-      '<h3 style="font-size:.95rem;margin-bottom:11px">Снимки (' + cs.length + ')</h3><div class="modal__gallery">' + shots + '</div></div>');
+      '<h3 style="font-size:.95rem;margin-bottom:11px">Снимки (' + countShots + ')</h3><div class="modal__gallery">' + shots + extra + '</div></div>');
   }
 
   /* ------------------------------------------------------------- рендер: списки */
@@ -495,15 +994,20 @@
       '</div>' +
       '<div class="grid grid--2">' +
         '<section class="card card--pad"><h2 style="font-size:1.05rem;margin-bottom:14px">По разделам</h2>' +
-          '<table class="table"><thead><tr><th>Раздел</th><th>Пройдено</th><th>Точность</th></tr></thead><tbody>' +
+          '<div class="table-wrap"><table class="table table--stats"><thead><tr><th>Раздел</th><th>Пройдено</th><th>Точность</th></tr></thead><tbody>' +
           ss.map(function (x) {
-            return '<tr><td><span class="badge badge--dot" style="color:' + x.s.color + '">' + esc(x.s.title) + '</span></td>' +
-              '<td>' + x.touched + ' / ' + x.cards + '</td><td>' + (x.seen ? x.accuracy + '%' : '—') + '</td></tr>';
-          }).join('') + '</tbody></table></section>' +
+            return '<tr><td>' +
+              '<span class="badge badge--dot badge--system" style="color:' + x.s.color + '">' + esc(x.s.title) + '</span>' +
+              // На узком окне цифры уходят под название: в три колонки они
+              // не помещаются и раньше вылезали за карточку.
+              '<span class="table__sm"><span>Пройдено</span><span>' + x.touched + ' / ' + x.cards + '</span></span>' +
+              '<span class="table__sm"><span>Точность</span><span>' + (x.seen ? x.accuracy + '%' : '—') + '</span></span>' +
+              '</td><td>' + x.touched + ' / ' + x.cards + '</td><td>' + (x.seen ? x.accuracy + '%' : '—') + '</td></tr>';
+          }).join('') + '</tbody></table></div></section>' +
         '<section class="card card--pad"><h2 style="font-size:1.05rem;margin-bottom:14px">Сложные препараты</h2>' +
           (hard.length ? hard.map(function (c) {
             var p = state.progress[c.id];
-            return '<div class="summary-line"><span>' + esc(groupById[c.groupId].title) + '</span><span>' + p.wrong + ' ошибок / ' + p.seen + '</span></div>';
+            return '<div class="summary-line"><span>' + esc(groupById[c.groupId].title) + '</span><span class="summary-line__num">' + p.wrong + ' ошибок / ' + p.seen + '</span></div>';
           }).join('') : '<p class="muted" style="font-size:.87rem">Пока нет данных.</p>') +
           '<div class="divider"></div><h3 style="font-size:.92rem;margin-bottom:10px">Последние сессии</h3>' +
           (state.sessions.length ? state.sessions.slice(0, 6).map(function (s) {
@@ -613,15 +1117,68 @@
     modalRoot.innerHTML = '';
     if (lightbox.hidden) document.body.style.overflow = '';
   }
+  /* Просмотр снимка крупно: на телефоне и в узком окне подписи-выноски иначе
+     не прочитать. Свой зум (кнопки, колесо, двойной клик, щипок) и перетаскивание;
+     полноэкранный режим — по кнопке. */
+  var zoom = { scale: 1, x: 0, y: 0, fit: 1, w: 0, h: 0 };
+  var clampZoom = function (v) { return Math.min(8, Math.max(1, v)); };
+  function applyZoom() {
+    var img = lightbox.querySelector('.lightbox__img');
+    if (!img) return;
+    img.style.transform = 'translate(' + zoom.x + 'px,' + zoom.y + 'px) scale(' + zoom.scale + ')';
+    img.style.cursor = zoom.scale > 1 ? 'grab' : 'zoom-in';
+    var lvl = lightbox.querySelector('.lightbox__level');
+    if (lvl) lvl.textContent = Math.round(zoom.scale * 100) + '%';
+    lightbox.classList.toggle('is-zoomed', zoom.scale > 1);
+  }
+  function zoomBy(factor, clientX, clientY) {
+    var prev = zoom.scale;
+    zoom.scale = clampZoom(zoom.scale * factor);
+    // Приближаем к точке, по которой кликнули, а не к центру экрана.
+    if (clientX != null && zoom.scale !== 1) {
+      var r = lightbox.getBoundingClientRect();
+      var dx = clientX - (r.left + r.width / 2), dy = clientY - (r.top + r.height / 2);
+      zoom.x = (zoom.x - dx) * (zoom.scale / prev) + dx;
+      zoom.y = (zoom.y - dy) * (zoom.scale / prev) + dy;
+    }
+    if (zoom.scale === 1) { zoom.x = 0; zoom.y = 0; }
+    applyZoom();
+  }
+  function resetZoom() { zoom.scale = 1; zoom.x = 0; zoom.y = 0; applyZoom(); }
+  function toggleFullscreen() {
+    var el = document.documentElement;
+    if (!document.fullscreenElement) {
+      var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+      if (req) { try { req.call(el); } catch (e) {} }
+    } else if (document.exitFullscreen) {
+      try { document.exitFullscreen(); } catch (e) {}
+    }
+  }
   function openLightbox(src, cap) {
-    lightbox.innerHTML = '<button class="lightbox__close" data-action="close-lightbox" aria-label="Закрыть">×</button>' +
-      '<img src="' + esc(src) + '" alt="' + esc(cap) + '"><div class="lightbox__caption">' + esc(cap) + '</div>';
+    zoom = { scale: 1, x: 0, y: 0, fit: 1, w: 0, h: 0 };
+    lightbox.innerHTML =
+      '<div class="lightbox__bar">' +
+        '<div class="lightbox__tools">' +
+          '<button type="button" class="lightbox__btn" data-action="zoom-out" aria-label="Уменьшить">−</button>' +
+          '<button type="button" class="lightbox__btn lightbox__level" data-action="zoom-reset" title="Сбросить масштаб">100%</button>' +
+          '<button type="button" class="lightbox__btn" data-action="zoom-in" aria-label="Увеличить">+</button>' +
+          '<button type="button" class="lightbox__btn lightbox__btn--wide" data-action="fullscreen" title="Полный экран (F)">⛶ Полный экран</button>' +
+        '</div>' +
+        '<button class="lightbox__close" data-action="close-lightbox" aria-label="Закрыть">×</button>' +
+      '</div>' +
+      '<div class="lightbox__stage"><img class="lightbox__img" src="' + esc(src) + '" alt="' + esc(cap) + '" draggable="false"></div>' +
+      '<div class="lightbox__caption">' + esc(cap) +
+        '<span class="lightbox__hint">Колесо или двойной клик — масштаб, перетаскивание — сдвиг</span></div>';
     lightbox.hidden = false;
     document.body.style.overflow = 'hidden';
+    var img = lightbox.querySelector('.lightbox__img');
+    img.addEventListener('load', resetZoom);
+    if (img.complete) resetZoom();
   }
   function closeLightbox() {
     lightbox.hidden = true;
     lightbox.innerHTML = '';
+    zoom = { scale: 1, x: 0, y: 0, fit: 1, w: 0, h: 0 };
     if (modalRoot.hidden) document.body.style.overflow = '';
   }
 
@@ -660,9 +1217,9 @@
         startSession(poolFor(state.settings, 'all').map(function (x) { return x.id; }),
           { all: state.settings.count === 'all', label: 'Тренировка' }); break;
       case 'start-wrong':
-        startSession(cards.filter(function (x) { return state.progress[x.id] && state.progress[x.id].wrong > 0; }).map(function (x) { return x.id; }), { all: true, label: 'Ошибки' }); break;
+        startSession(trainingCards(cards.filter(function (x) { return state.progress[x.id] && state.progress[x.id].wrong > 0; })).map(function (x) { return x.id; }), { all: true, label: 'Ошибки' }); break;
       case 'start-fav':
-        startSession(cards.filter(function (x) { return state.progress[x.id] && state.progress[x.id].favorite; }).map(function (x) { return x.id; }), { all: true, label: 'Избранное' }); break;
+        startSession(trainingCards(cards.filter(function (x) { return state.progress[x.id] && state.progress[x.id].favorite; })).map(function (x) { return x.id; }), { all: true, label: 'Избранное' }); break;
       case 'answer':
         card = currentCard(); if (card) answer(card, gid, ''); break;
       case 'check-input':
@@ -696,23 +1253,36 @@
         }
         break;
       case 'restart':
-        if (s) startSession(s.ids, { all: true, mode: s.mode, label: s.label }); break;
+        if (s) startSession(s.ids, { all: true, mode: s.mode, label: s.label, parent: s.parent }); break;
       case 'repeat-wrong':
-        if (s) startSession(s.ids.filter(function (id) { return s.answers[id] && !s.answers[id].correct; }), { all: true, mode: s.mode, label: 'Ошибки' });
+        if (s) startSession(s.ids.filter(function (id) { return s.answers[id] && !s.answers[id].correct; }), { all: true, mode: s.mode, label: 'Ошибки', parent: s.parent });
         break;
       case 'new-session':
         state.session = null; save(); render(true); break;
+      case 'prev':
+        prev(); break;
       case 'train-group':
       case 'train-group-from':
         if (gid) {
           if (a === 'train-group-from') closeModal();
-          startSession((cardsByGroup[gid] || []).map(function (c) { return c.id; }), { all: true, label: groupById[gid].title });
+          // Если запускаем посреди другой сессии — сохраняем её целиком
+          // (вопрос, ответы, подсказки), чтобы потом вернуться.
+          var parent = s && !sessionDone() ? (s.parent ? s.parent.session : s) : null;
+          startSession(trainingCards(cardsByGroup[gid] || []).map(function (c) { return c.id; }), {
+            all: true, label: groupById[gid].title,
+            parent: parent ? { from: 'session', session: parent } : null
+          });
         }
         break;
+      case 'back-to-parent': backToParent(); break;
       case 'open-group': openGroup(gid); break;
       case 'close-modal': closeModal(); break;
       case 'zoom': openLightbox(t.getAttribute('data-src'), t.getAttribute('data-cap')); break;
       case 'close-lightbox': closeLightbox(); break;
+      case 'zoom-in': zoomBy(1.6); break;
+      case 'zoom-out': zoomBy(1 / 1.6); break;
+      case 'zoom-reset': resetZoom(); break;
+      case 'fullscreen': toggleFullscreen(); break;
       case 'atlas-system': atlasSystem = sid; render(false); break;
       case 'reset':
         if (confirm('Сбросить весь прогресс, избранное и историю сессий? Настройки и тема останутся.')) {
@@ -721,6 +1291,69 @@
         break;
     }
   });
+
+  /* --- жесты в просмотре снимка ------------------------------------------ */
+  var drag = null, pinch = null, lastPinch = 0;
+
+  lightbox.addEventListener('wheel', function (e) {
+    if (lightbox.hidden) return;
+    if (e.target.closest('.lightbox__bar')) return;   // над тулбаром колесо не зумит
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 1.18 : 1 / 1.18, e.clientX, e.clientY);
+  }, { passive: false });
+
+  lightbox.addEventListener('dblclick', function (e) {
+    if (!e.target.closest('.lightbox__img')) return;
+    if (zoom.scale > 1) resetZoom(); else zoomBy(2.2, e.clientX, e.clientY);
+  });
+
+  lightbox.addEventListener('pointerdown', function (e) {
+    var img = e.target.closest('.lightbox__img');
+    if (!img || lightbox.hidden) return;
+    if (e.pointerType === 'touch' && e.isPrimary === false) return;
+    drag = { x: e.clientX, y: e.clientY, ox: zoom.x, oy: zoom.y, moved: false, id: e.pointerId };
+    if (zoom.scale > 1) {
+      e.preventDefault();
+      try { img.setPointerCapture(e.pointerId); } catch (err) {}
+    }
+  });
+  lightbox.addEventListener('pointermove', function (e) {
+    if (!drag) return;
+    var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    if (zoom.scale > 1) { zoom.x = drag.ox + dx; zoom.y = drag.oy + dy; applyZoom(); }
+  });
+  lightbox.addEventListener('pointerup', function (e) {
+    if (!drag) return;
+    // Короткий тап пальцем переключает масштаб: на телефоне это привычнее,
+    // чем искать кнопки. Для мыши масштаб переключает dblclick — иначе оба
+    // обработчика сработали бы на один двойной клик и гасили друг друга.
+    var tap = !drag.moved && e.pointerType !== 'mouse' && Date.now() - lastPinch > 350;
+    drag = null;
+    if (tap) {
+      if (zoom.scale > 1) resetZoom(); else zoomBy(2.2, e.clientX, e.clientY);
+    }
+  });
+  lightbox.addEventListener('pointercancel', function () { drag = null; });
+
+  // Щипок двумя пальцами.
+  lightbox.addEventListener('touchstart', function (e) {
+    if (e.touches.length === 2) {
+      drag = null;
+      pinch = { d: Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY), s: zoom.scale };
+    }
+  }, { passive: true });
+  lightbox.addEventListener('touchmove', function (e) {
+    if (e.touches.length !== 2 || !pinch) return;
+    e.preventDefault();
+    var d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    zoom.scale = clampZoom(pinch.s * (d / pinch.d));
+    if (zoom.scale === 1) { zoom.x = 0; zoom.y = 0; }
+    applyZoom();
+  }, { passive: false });
+  lightbox.addEventListener('touchend', function (e) {
+    if (e.touches.length < 2) { if (pinch) lastPinch = Date.now(); pinch = null; }
+  }, { passive: true });
 
   // Поиск в атласе без перерисовки всей страницы на каждый символ.
   document.addEventListener('input', function (e) {
@@ -750,7 +1383,14 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') { if (!lightbox.hidden) closeLightbox(); else if (!modalRoot.hidden) closeModal(); return; }
-    if (!lightbox.hidden || !modalRoot.hidden) return;
+    if (!lightbox.hidden) {
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomBy(1.6); }
+      if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomBy(1 / 1.6); }
+      if (e.key === '0') { e.preventDefault(); resetZoom(); }
+      if (e.key.toLowerCase() === 'f') { e.preventDefault(); toggleFullscreen(); }
+      return;
+    }
+    if (!modalRoot.hidden) return;
     if (route() !== 'train' || !state.session || sessionDone()) return;
     var tag = (e.target.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'textarea') {
@@ -758,6 +1398,7 @@
       return;
     }
     var card = currentCard(), ans = card && state.session.answers[card.id];
+    if (e.key === 'ArrowLeft' && state.session.idx > 0) { e.preventDefault(); prev(); return; }
     if (ans) {
       if (e.key === 'Enter') { e.preventDefault(); next(); }
       return;

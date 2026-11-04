@@ -139,7 +139,9 @@ img, svg { display: block; }
 [data-theme="dark"] .icon--sun { display: none; }
 .menu-toggle { display: none; align-items: center; gap: 7px; margin-left: auto; padding: 8px 12px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-full); font-size: .86rem; font-weight: 600; }
 .menu-toggle svg { width: 18px; height: 18px; }
-.mobile-nav { display: none; border-bottom: 1px solid var(--border); background: var(--surface); padding: 10px 18px 14px; }
+/* Панель меню живёт внутри липкой шапки: раскрывается там, где сейчас виден
+   экран, а не в начале документа. Высокий список прокручивается сам. */
+.mobile-nav { display: none; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--surface); padding: 10px 18px 14px; max-height: calc(100vh - 60px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .mobile-nav nav { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .mobile-nav a { padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); font-size: .9rem; font-weight: 560; }
 .mobile-nav a.is-active { background: var(--primary-soft); color: var(--primary-strong); }
@@ -239,7 +241,9 @@ img, svg { display: block; }
 .quiz__meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .quiz__progress { height: 6px; border-radius: var(--r-full); background: var(--surface-3); overflow: hidden; margin-bottom: 16px; }
 .quiz__progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--primary), var(--teal)); transition: width .4s var(--ease); }
-.quiz__top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.quiz__top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; } .quiz__nav { display: flex; align-items: center; gap: 10px; }
+.quiz__prev { padding: 5px 10px; }
+.quiz__prev:disabled { opacity: .45; cursor: default; }
 .quiz__count { font-size: .82rem; color: var(--muted); font-weight: 620; }
 .quiz__question { font-size: 1.02rem; font-weight: 660; margin-bottom: 4px; }
 .quiz__sub { font-size: .84rem; color: var(--muted); margin-bottom: 16px; }
@@ -263,12 +267,16 @@ img, svg { display: block; }
 .feedback.is-ok .dot { background: var(--ok); }
 .feedback.is-bad .dot { background: var(--bad); }
 .feedback__answer { font-size: 1rem; font-weight: 700; margin: 4px 0 8px; }
-.feedback__desc { font-size: .85rem; color: var(--text-2); }
+.feedback__desc { font-size: .85rem; color: var(--text-2); line-height: 1.55; white-space: pre-line; overflow-wrap: anywhere; }
 .feedback__chips { margin-top: 10px; }
 .feedback__actions { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
-.reveal { margin-top: 14px; }
-.reveal img { width: 100%; border-radius: var(--r-md); border: 1px solid var(--border); }
+.reveal { margin-top: 14px; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; background: var(--surface-3); cursor: zoom-in; }
+.reveal img { display: block; width: 100%; max-height: 34vh; object-fit: contain; margin: 0 auto; }
+.reveal__cap { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; font-size: .76rem; color: var(--muted); border-top: 1px solid var(--border); background: var(--surface); }
 .quiz__bottom { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.quiz__bottom-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+/* Итоги сессии: «Новая тренировка» — главное действие, остальное тише. */
+.session-done__more { margin-top: 22px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; align-items: center; }
 .kbd { display: inline-block; min-width: 19px; padding: 1px 5px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface); font: .72rem/1.4 var(--font); text-align: center; color: var(--muted); }
 .session-done { text-align: center; padding: 34px 20px; }
 .session-done__ring { width: 108px; height: 108px; margin: 0 auto 18px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--primary) var(--p, 0%), var(--surface-3) 0); position: relative; }
@@ -302,12 +310,26 @@ img, svg { display: block; }
 .card-row__actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
 
 /* ------------------------------------------------------------------ статистика */
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin-bottom: 18px; }
-.stat-box { padding: 18px; }
+.stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; margin-bottom: 18px; }
+.stat-box { padding: 18px; min-width: 0; }
+.stat-num { overflow-wrap: anywhere; }
+/* Длинные названия разделов и сессий раньше не переносились и вылезали
+   за карточку: таблица ширилась под текст, а бейдж не переносился вовсе. */
+.table-wrap { width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table { width: 100%; border-collapse: collapse; font-size: .87rem; }
 .table th, .table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-.table th { color: var(--muted); font-weight: 650; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+.table th { color: var(--muted); font-weight: 650; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+.table td { overflow-wrap: anywhere; }
 .table tr:last-child td { border-bottom: 0; }
+.table--stats th:first-child, .table--stats td:first-child { width: 100%; }
+.table--stats td:not(:first-child) { white-space: nowrap; text-align: right; }
+.table--stats th:not(:first-child) { text-align: right; }
+/* Запасные строки «Пройдено / Точность» внутри ячейки: нужны только там, где
+   три колонки не помещаются. На широком экране их нет. */
+.table__sm { display: none; }
+.table__sm > span:first-child { color: var(--muted); }
+.badge--system { white-space: normal; max-width: 100%; padding: 4px 10px; line-height: 1.35; }
+.summary-line__num { white-space: nowrap; }
 
 /* ------------------------------------------------------------------ оверлеи */
 .overlay, .lightbox { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 22px; background: rgba(12, 8, 24, .62); backdrop-filter: blur(5px); }
@@ -322,9 +344,25 @@ img, svg { display: block; }
 .modal__shot { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; background: var(--surface-3); }
 .modal__shot img { width: 100%; aspect-ratio: 4/3; object-fit: cover; cursor: zoom-in; }
 .modal__shot p { padding: 8px 10px; font-size: .74rem; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; }
-.lightbox img { max-width: 94vw; max-height: 88vh; object-fit: contain; border-radius: var(--r-md); box-shadow: var(--shadow-lg); background: #fff; }
-.lightbox__close { position: absolute; top: 18px; right: 20px; width: 40px; height: 40px; border: 0; border-radius: 50%; background: rgba(255,255,255,.16); color: #fff; font-size: 1.4rem; }
-.lightbox__caption { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); padding: 7px 14px; border-radius: var(--r-full); background: rgba(12,8,24,.7); color: #fff; font-size: .8rem; }
+.lightbox { padding: 0; display: block; overflow: hidden; }
+.lightbox__bar { position: absolute; top: 0; left: 0; right: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; background: linear-gradient(rgba(12,8,24,.72), rgba(12,8,24,0)); }
+.lightbox__tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.lightbox__btn { min-width: 38px; height: 38px; padding: 0 11px; border: 1px solid rgba(255,255,255,.22); border-radius: var(--r-full); background: rgba(255,255,255,.12); color: #fff; font: 600 .86rem/1 var(--font); backdrop-filter: blur(6px); transition: background .15s var(--ease); }
+.lightbox__btn:hover { background: rgba(255,255,255,.24); }
+.lightbox__btn--wide { font-size: .78rem; font-weight: 580; }
+.lightbox__level { min-width: 62px; font-variant-numeric: tabular-nums; color: #e9e2ff; }
+.lightbox__close { width: 40px; height: 40px; border: 0; border-radius: 50%; background: rgba(255,255,255,.16); color: #fff; font-size: 1.4rem; flex: none; }
+.lightbox__stage { position: absolute; inset: 0; overflow: hidden; display: grid; place-items: center; touch-action: none; cursor: zoom-in; }
+.lightbox__img { max-width: 100vw; max-height: 100vh; object-fit: contain; user-select: none; -webkit-user-drag: none; transform-origin: center center; transition: transform .12s var(--ease); will-change: transform; background: #fff; }
+.lightbox.is-zoomed .lightbox__img { transition: none; }
+.lightbox.is-zoomed .lightbox__stage { cursor: grab; }
+.lightbox__caption { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 2; max-width: min(760px, 92vw); padding: 8px 14px; border-radius: var(--r-md); background: rgba(12,8,24,.74); color: #fff; font-size: .8rem; text-align: center; backdrop-filter: blur(6px); }
+.lightbox__hint { display: block; margin-top: 3px; font-size: .72rem; color: rgba(255,255,255,.72); }
+@media (max-width: 640px) {
+  .lightbox__caption { bottom: 10px; font-size: .76rem; }
+  .lightbox__hint { display: none; }
+  .lightbox__btn--wide { font-size: .72rem; padding: 0 9px; }
+}
 .toast { position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 18px); z-index: 200; padding: 11px 18px; border-radius: var(--r-full); background: var(--text); color: var(--surface); font-size: .86rem; font-weight: 580; box-shadow: var(--shadow-md); opacity: 0; pointer-events: none; transition: all .25s var(--ease); }
 .toast.is-on { opacity: 1; transform: translate(-50%, 0); }
 
@@ -335,7 +373,7 @@ img, svg { display: block; }
   .mobile-nav:not([hidden]) { display: block; }
   .home-grid, .setup, .quiz { grid-template-columns: 1fr; }
   .setup__side { position: static; }
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid--3 { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 640px) {
@@ -344,7 +382,7 @@ img, svg { display: block; }
   .main { padding: 20px 14px 48px; }
   .hero { padding: 26px 22px; border-radius: var(--r-lg); }
   .hero__meta { gap: 14px; }
-  .grid--3, .grid--2, .tile-grid, .stats-grid { grid-template-columns: 1fr; }
+  .grid--3, .grid--2, .tile-grid, .stats-grid { grid-template-columns: minmax(0, 1fr); }
   .quiz__imgwrap { min-height: 220px; }
   .quiz__imgwrap img { max-height: 44vh; max-width: 100%; }
   .card--pad { padding: 16px; }
@@ -354,6 +392,28 @@ img, svg { display: block; }
   .card-row { flex-wrap: wrap; }
   .card-row__actions { width: 100%; justify-content: flex-start; }
 }
+/* Узкое окно (в т.ч. уменьшенное окно на ПК): таблица «По разделам» больше не
+   трёхколоночная — название сверху, «Пройдено» и «Точность» строчками под ним.
+   Горизонтальной прокрутки и наезжающих друг на друга надписей не остаётся. */
+@media (max-width: 820px) {
+  .table--stats thead { display: none; }
+  .table--stats, .table--stats tbody, .table--stats tr, .table--stats td { display: block; width: auto; }
+  .table--stats tr { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .table--stats tr:last-child { border-bottom: 0; }
+  .table--stats td { padding: 0; border-bottom: 0; text-align: left; }
+  .table--stats td:not(:first-child) { display: none; }
+  .table--stats .badge--system { margin-bottom: 7px; }
+  .table__sm { display: flex; justify-content: space-between; gap: 14px; font-size: .84rem; padding: 2px 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Теория препарата в карточке атласа */
+.theory { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); padding: 14px 16px 6px; }
+.theory__head { font-size: .8rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--primary-strong); margin-bottom: 8px; }
+.theory__list { margin: 0 0 8px; padding-left: 18px; display: grid; gap: 7px; font-size: .87rem; line-height: 1.5; color: var(--text-2); }
+.theory__list li::marker { color: var(--primary); font-weight: 700; }
+.theory__hint { margin-top: 12px; font-size: .82rem; color: var(--muted); }
+.theory__note { margin: 0 0 10px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--amber-soft); color: var(--amber); font-size: .8rem; line-height: 1.4; }

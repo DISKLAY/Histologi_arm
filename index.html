@@ -8,7 +8,7 @@
   <meta name="theme-color" content="#f6f4fb">
   <meta name="color-scheme" content="light dark">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="css/styles.css?v=1">
+  <link rel="stylesheet" href="css/styles.css?v=8">
 </head>
 <body>
   <a class="skip-link" href="#app">Перейти к содержимому</a>
@@ -58,20 +58,19 @@
         <svg class="icon icon--moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.3A8.6 8.6 0 0 1 9.7 3.5a8.6 8.6 0 1 0 10.8 10.8Z"/></svg>
       </button>
     </div>
+    <div class="mobile-nav" id="mobileNav" hidden>
+      <nav aria-label="Мобильная навигация">
+        <a href="#/" data-route="home">Главная</a>
+        <a href="#/train" data-route="train">Тренировка</a>
+        <a href="#/atlas" data-route="atlas">Атлас</a>
+        <a href="#/mistakes" data-route="mistakes">Ошибки</a>
+        <a href="#/favorites" data-route="favorites">Избранное</a>
+        <a href="#/stats" data-route="stats">Статистика</a>
+        <a href="#/compare" data-route="compare">Сравнение</a>
+        <a href="#/about" data-route="about">О проекте</a>
+      </nav>
+    </div>
   </header>
-
-  <div class="mobile-nav" id="mobileNav" hidden>
-    <nav aria-label="Мобильная навигация">
-      <a href="#/" data-route="home">Главная</a>
-      <a href="#/train" data-route="train">Тренировка</a>
-      <a href="#/atlas" data-route="atlas">Атлас</a>
-      <a href="#/mistakes" data-route="mistakes">Ошибки</a>
-      <a href="#/favorites" data-route="favorites">Избранное</a>
-      <a href="#/stats" data-route="stats">Статистика</a>
-      <a href="#/compare" data-route="compare">Сравнение</a>
-      <a href="#/about" data-route="about">О проекте</a>
-    </nav>
-  </div>
 
   <main id="app" class="main" tabindex="-1"></main>
 
@@ -86,7 +85,7 @@
 
   <noscript><div class="noscript">Для работы тренажёра нужен JavaScript.</div></noscript>
 
-  <script src="js/data/preparations.js?v=1"></script>
-  <script src="js/app.js?v=1"></script>
+  <script src="js/data/preparations.js?v=8"></script>
+  <script src="js/app.js?v=8"></script>
 </body>
 </html>
