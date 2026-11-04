@@ -312,3 +312,99 @@ test('UI: атлас показывает теорию и не показыва�
   }
   assert.deepEqual(problems, [], 'атлас:\n' + problems.join('\n'));
 });
+
+test('UI: снимок открывается крупно, с зумом и кнопкой полного экрана', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  visit(w, 'train');
+  w.document.querySelector('[data-action="start"]').click();
+  const wrap = w.document.querySelector('.quiz__imgwrap');
+  assert.ok(wrap, 'нет снимка в вопросе');
+  wrap.click();
+
+  const box = w.document.getElementById('lightbox');
+  assert.equal(box.hidden, false, 'просмотр не открылся');
+  const img = box.querySelector('.lightbox__img');
+  assert.ok(img, 'нет изображения в просмотре');
+  for (const a of ['zoom-in', 'zoom-out', 'zoom-reset', 'fullscreen', 'close-lightbox']) {
+    assert.ok(box.querySelector(`[data-action="${a}"]`), `нет кнопки ${a}`);
+  }
+  assert.equal(box.querySelector('.lightbox__level').textContent, '100%');
+
+  box.querySelector('[data-action="zoom-in"]').click();
+  const scale = Number((img.style.transform.match(/scale\(([\d.]+)\)/) || [])[1]);
+  assert.ok(scale > 1, 'масштаб не вырос: ' + img.style.transform);
+  assert.match(box.querySelector('.lightbox__level').textContent, /^(1[6-9]\d|[2-9]\d\d)%$/);
+  assert.ok(box.classList.contains('is-zoomed'));
+
+  box.querySelector('[data-action="zoom-out"]').click();
+  box.querySelector('[data-action="zoom-out"]').click();
+  assert.equal(box.querySelector('.lightbox__level').textContent, '100%', 'меньше 100% не опускается');
+  assert.equal(box.querySelector('[data-action="zoom-in"]').closest('.lightbox__bar') !== null, true);
+
+  box.querySelector('[data-action="zoom-reset"]').click();
+  assert.equal(box.querySelector('.lightbox__level').textContent, '100%');
+
+  // Закрытие и повторное открытие — масштаб сбрасывается.
+  box.querySelector('[data-action="zoom-in"]').click();
+  box.querySelector('[data-action="close-lightbox"]').click();
+  assert.equal(box.hidden, true, 'просмотр не закрылся');
+  wrap.click();
+  assert.equal(box.querySelector('.lightbox__level').textContent, '100%', 'масштаб не сбросился');
+
+  // Подписанный снимок в разборе тоже открывается крупно.
+  box.querySelector('[data-action="close-lightbox"]').click();
+  w.document.querySelector('.option').click();
+  const signed = w.document.querySelector('.reveal');
+  if (signed) {
+    signed.click();
+    assert.equal(box.hidden, false, 'подписанный снимок не открылся');
+    assert.ok(box.querySelector('.lightbox__img').getAttribute('src').includes('reveal'));
+  }
+});
+
+test('UI: возврат к предыдущему вопросу сохраняет ответ и разбор', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  visit(w, 'train');
+  w.document.querySelector('[data-action="start"]').click();
+  const count = () => w.document.querySelector('.quiz__count').textContent;
+  assert.match(count(), /^Вопрос 1 из \d+$/);
+  assert.equal(w.document.querySelector('[data-action="prev"]').disabled, true, 'на первом вопросе «Назад» активна');
+
+  w.document.querySelector('.option').click();
+  const first = w.document.querySelector('.feedback__answer').textContent;
+  w.document.querySelector('[data-action="next"]').click();
+  assert.match(count(), /^Вопрос 2 из /);
+
+  w.document.querySelector('.option').click();
+  w.document.querySelector('[data-action="prev"]').click();
+  assert.match(count(), /^Вопрос 1 из /, 'не вернулись на предыдущий вопрос');
+  assert.ok(w.document.querySelector('.feedback'), 'ответ не сохранился');
+  assert.equal(w.document.querySelector('.feedback__answer').textContent, first, 'показан другой препарат');
+
+  w.document.querySelector('[data-action="next"]').click();
+  assert.match(count(), /^Вопрос 2 из /, 'вперёд не ведёт');
+  assert.ok(w.document.querySelector('.feedback'), 'ответ второго вопроса потерялся');
+});
+
+test('UI: «Тренировать этот препарат» работает из атласа и из разбора', { skip: JSDOM ? false : 'jsdom не установлен' }, () => {
+  const { w } = boot();
+  const tick = () => new Promise(r => setTimeout(r, 20));
+  return (async () => {
+    visit(w, 'atlas');
+    w.document.querySelector('[data-action="open-group"][data-gid="heart"]').click();
+    w.document.querySelector('[data-action="train-group-from"]').click();
+    await tick();
+    assert.equal(w.location.hash, '#/train', 'не перешли на экран тренировки');
+    assert.equal(w.document.getElementById('modalRoot').hidden, true, 'карточка атласа осталась открытой');
+    assert.ok(w.document.querySelector('.quiz__count'), 'вопрос не показан');
+    assert.equal(w.document.querySelector('.quiz__top .badge').textContent, 'Стенка сердца', 'сессия не про выбранный препарат');
+
+    // Из разбора: кнопка знает, к какому препарату относится.
+    w.document.querySelector('.option').click();
+    const again = w.document.querySelector('[data-action="train-group"]');
+    assert.ok(again.getAttribute('data-gid'), 'у кнопки нет препарата');
+    again.click();
+    await tick();
+    assert.match(w.document.querySelector('.quiz__count').textContent, /^Вопрос 1 из /, 'сессия не началась заново');
+  })();
+});

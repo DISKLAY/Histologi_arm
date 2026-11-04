@@ -161,9 +161,13 @@
     state.session = {
       ids: list, idx: 0, mode: opts.mode || state.settings.mode,
       label: opts.label || 'Тренировка', answers: {}, options: options,
-      started: Date.now(), hinted: {}
+      started: Date.now(), hinted: {}, finished: false
     };
-    save(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+    save();
+    // Сессию можно запустить откуда угодно (атлас, избранное, статистика):
+    // без этого экран оставался прежним и казалось, что кнопка не работает.
+    if (route() !== 'train') go('train'); else render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
   function currentCard() {
     if (!state.session) return null;
@@ -179,7 +183,9 @@
   }
   function finishSession() {
     var s = state.session;
-    if (!s) return;
+    // Сессию можно «переиграть» назад и вперёд — в историю она попадает один раз.
+    if (!s || s.finished) return;
+    s.finished = true;
     var correct = 0;
     s.ids.forEach(function (id) { if (s.answers[id] && s.answers[id].correct) correct++; });
     state.sessions.unshift({ id: Date.now(), at: Date.now(), correct: correct, total: s.ids.length, label: s.label, mode: s.mode });
@@ -207,6 +213,16 @@
     if (!s) return;
     s.idx += 1;
     if (s.idx >= s.ids.length) finishSession();
+    save(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  /* Шаг назад: ответ на предыдущий вопрос не стирается — он уже учтён в
+     статистике. Вернувшись, видно свой ответ и разбор, а «Далее» ведёт обратно.
+     Если сессия завершена, шаг назад оживляет последний вопрос. */
+  function prev() {
+    var s = state.session;
+    if (!s || s.idx <= 0) return;
+    s.idx -= 1;
+    if (s.finished) s.finished = false;   // вернулись из итогов — сессия живая
     save(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -329,7 +345,7 @@
           '<div class="summary-line"><span>Перемешивать</span><span>' + (st.shuffle ? 'да' : 'нет') + '</span></div>' +
           '<button type="button" class="btn btn--sm" data-action="toggle-shuffle" style="margin-top:10px;width:100%">' + (st.shuffle ? 'Не перемешивать' : 'Перемешивать') + '</button>' +
           '<button type="button" class="btn btn--primary" data-action="start" style="margin-top:14px;width:100%">Начать →</button>' +
-          '<p class="muted" style="font-size:.76rem;margin-top:12px">Горячие клавиши: <span class="kbd">1</span>–<span class="kbd">4</span> — ответ, <span class="kbd">H</span> — подсказка, <span class="kbd">F</span> — избранное, <span class="kbd">Z</span> — увеличить.</p>' +
+          '<p class="muted" style="font-size:.76rem;margin-top:12px">Горячие клавиши: <span class="kbd">1</span>–<span class="kbd">4</span> — ответ, <span class="kbd">H</span> — подсказка, <span class="kbd">F</span> — избранное, <span class="kbd">Z</span> — увеличить, <span class="kbd">←</span> — назад.</p>' +
         '</aside>' +
       '</div>';
   }
@@ -356,7 +372,11 @@
 
     var right = '<section class="card card--pad">' +
       '<div class="quiz__progress"><i style="width:' + pct(s.idx, s.ids.length) + '%"></i></div>' +
-      '<div class="quiz__top"><span class="quiz__count">Вопрос ' + (s.idx + 1) + ' из ' + s.ids.length + '</span><span class="badge">' + esc(s.label) + '</span></div>' +
+      '<div class="quiz__top">' +
+        '<div class="quiz__nav">' +
+          '<button type="button" class="btn btn--sm btn--ghost quiz__prev" data-action="prev"' + (s.idx > 0 ? '' : ' disabled') + ' title="Вернуться к предыдущему вопросу (←)">← Назад</button>' +
+          '<span class="quiz__count">Вопрос ' + (s.idx + 1) + ' из ' + s.ids.length + '</span>' +
+        '</div><span class="badge">' + esc(s.label) + '</span></div>' +
       '<div class="quiz__question">Что за препарат на снимке?</div>' +
       '<div class="quiz__sub">' + (hinted ? 'Подсказка: ' + esc(systemHint(sys, g)) + ' · окраска ' + esc(g.stain) : 'Ориентируйтесь на структуру ткани и окраску.') + '</div>';
 
@@ -391,9 +411,10 @@
         '<p class="feedback__desc" style="margin-top:10px">' + esc(g.hint) + '</p>' +
         '<div class="feedback__actions">' +
           (revealFor(card) ? '<button type="button" class="btn btn--sm" data-action="toggle-reveal">' + (revealed ? 'Скрыть подписи' : 'Показать подписанный снимок') + '</button>' : '') +
-          '<button type="button" class="btn btn--sm" data-action="train-group">Тренировать этот препарат</button>' +
+          '<button type="button" class="btn btn--sm" data-action="train-group" data-gid="' + esc(card.groupId) + '">Тренировать этот препарат</button>' +
         '</div>' +
-        (revealed && revealFor(card) ? '<div class="reveal"><img src="' + esc(revealFor(card)) + '" alt="Подписанный вариант препарата"><p class="muted" style="font-size:.76rem;margin-top:6px">Исходный слайд с подписями — для разбора.</p></div>' : '') +
+        (revealed && revealFor(card) ? '<div class="reveal" data-action="zoom" data-src="' + esc(revealFor(card)) + '" data-cap="' + esc(g.title) + ' · подписанный слайд"><img src="' + esc(revealFor(card)) + '" alt="Подписанный вариант препарата">' +
+          '<p class="reveal__cap"><span>С подписями — нажмите, чтобы увеличить</span><span class="badge">разбор</span></p></div>' : '') +
       '</div>' +
       '<div class="quiz__bottom"><span class="muted" style="font-size:.8rem">' + esc(card.source) + '</span>' +
         '<button type="button" class="btn btn--primary" data-action="next">' + (s.idx + 1 >= s.ids.length ? 'Завершить →' : 'Следующий →') + '</button></div>';
@@ -718,7 +739,9 @@
         (wrong.length ? '<button type="button" class="btn" data-action="repeat-wrong">Повторить ошибки (' + wrong.length + ')</button>' : '') +
         '<a class="btn btn--ghost" href="#/atlas">В атлас</a>' +
       '</div>' +
-      '<div style="margin-top:22px"><button type="button" class="btn btn--sm btn--ghost" data-action="new-session">Новая настройка</button></div>' +
+      '<div style="margin-top:22px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">' +
+        '<button type="button" class="btn btn--sm btn--ghost" data-action="prev">← К последнему вопросу</button>' +
+        '<button type="button" class="btn btn--sm btn--ghost" data-action="new-session">Новая настройка</button></div>' +
     '</div>';
   }
   function renderTrain() {
@@ -1018,15 +1041,68 @@
     modalRoot.innerHTML = '';
     if (lightbox.hidden) document.body.style.overflow = '';
   }
+  /* Просмотр снимка крупно: на телефоне и в узком окне подписи-выноски иначе
+     не прочитать. Свой зум (кнопки, колесо, двойной клик, щипок) и перетаскивание;
+     полноэкранный режим — по кнопке. */
+  var zoom = { scale: 1, x: 0, y: 0, fit: 1, w: 0, h: 0 };
+  var clampZoom = function (v) { return Math.min(8, Math.max(1, v)); };
+  function applyZoom() {
+    var img = lightbox.querySelector('.lightbox__img');
+    if (!img) return;
+    img.style.transform = 'translate(' + zoom.x + 'px,' + zoom.y + 'px) scale(' + zoom.scale + ')';
+    img.style.cursor = zoom.scale > 1 ? 'grab' : 'zoom-in';
+    var lvl = lightbox.querySelector('.lightbox__level');
+    if (lvl) lvl.textContent = Math.round(zoom.scale * 100) + '%';
+    lightbox.classList.toggle('is-zoomed', zoom.scale > 1);
+  }
+  function zoomBy(factor, clientX, clientY) {
+    var prev = zoom.scale;
+    zoom.scale = clampZoom(zoom.scale * factor);
+    // Приближаем к точке, по которой кликнули, а не к центру экрана.
+    if (clientX != null && zoom.scale !== 1) {
+      var r = lightbox.getBoundingClientRect();
+      var dx = clientX - (r.left + r.width / 2), dy = clientY - (r.top + r.height / 2);
+      zoom.x = (zoom.x - dx) * (zoom.scale / prev) + dx;
+      zoom.y = (zoom.y - dy) * (zoom.scale / prev) + dy;
+    }
+    if (zoom.scale === 1) { zoom.x = 0; zoom.y = 0; }
+    applyZoom();
+  }
+  function resetZoom() { zoom.scale = 1; zoom.x = 0; zoom.y = 0; applyZoom(); }
+  function toggleFullscreen() {
+    var el = document.documentElement;
+    if (!document.fullscreenElement) {
+      var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+      if (req) { try { req.call(el); } catch (e) {} }
+    } else if (document.exitFullscreen) {
+      try { document.exitFullscreen(); } catch (e) {}
+    }
+  }
   function openLightbox(src, cap) {
-    lightbox.innerHTML = '<button class="lightbox__close" data-action="close-lightbox" aria-label="Закрыть">×</button>' +
-      '<img src="' + esc(src) + '" alt="' + esc(cap) + '"><div class="lightbox__caption">' + esc(cap) + '</div>';
+    zoom = { scale: 1, x: 0, y: 0, fit: 1, w: 0, h: 0 };
+    lightbox.innerHTML =
+      '<div class="lightbox__bar">' +
+        '<div class="lightbox__tools">' +
+          '<button type="button" class="lightbox__btn" data-action="zoom-out" aria-label="Уменьшить">−</button>' +
+          '<button type="button" class="lightbox__btn lightbox__level" data-action="zoom-reset" title="Сбросить масштаб">100%</button>' +
+          '<button type="button" class="lightbox__btn" data-action="zoom-in" aria-label="Увеличить">+</button>' +
+          '<button type="button" class="lightbox__btn lightbox__btn--wide" data-action="fullscreen" title="Полный экран (F)">⛶ Полный экран</button>' +
+        '</div>' +
+        '<button class="lightbox__close" data-action="close-lightbox" aria-label="Закрыть">×</button>' +
+      '</div>' +
+      '<div class="lightbox__stage"><img class="lightbox__img" src="' + esc(src) + '" alt="' + esc(cap) + '" draggable="false"></div>' +
+      '<div class="lightbox__caption">' + esc(cap) +
+        '<span class="lightbox__hint">Колесо или двойной клик — масштаб, перетаскивание — сдвиг</span></div>';
     lightbox.hidden = false;
     document.body.style.overflow = 'hidden';
+    var img = lightbox.querySelector('.lightbox__img');
+    img.addEventListener('load', resetZoom);
+    if (img.complete) resetZoom();
   }
   function closeLightbox() {
     lightbox.hidden = true;
     lightbox.innerHTML = '';
+    zoom = { scale: 1, x: 0, y: 0, fit: 1, w: 0, h: 0 };
     if (modalRoot.hidden) document.body.style.overflow = '';
   }
 
@@ -1107,6 +1183,8 @@
         break;
       case 'new-session':
         state.session = null; save(); render(true); break;
+      case 'prev':
+        prev(); break;
       case 'train-group':
       case 'train-group-from':
         if (gid) {
@@ -1118,6 +1196,10 @@
       case 'close-modal': closeModal(); break;
       case 'zoom': openLightbox(t.getAttribute('data-src'), t.getAttribute('data-cap')); break;
       case 'close-lightbox': closeLightbox(); break;
+      case 'zoom-in': zoomBy(1.6); break;
+      case 'zoom-out': zoomBy(1 / 1.6); break;
+      case 'zoom-reset': resetZoom(); break;
+      case 'fullscreen': toggleFullscreen(); break;
       case 'atlas-system': atlasSystem = sid; render(false); break;
       case 'reset':
         if (confirm('Сбросить весь прогресс, избранное и историю сессий? Настройки и тема останутся.')) {
@@ -1126,6 +1208,69 @@
         break;
     }
   });
+
+  /* --- жесты в просмотре снимка ------------------------------------------ */
+  var drag = null, pinch = null, lastPinch = 0;
+
+  lightbox.addEventListener('wheel', function (e) {
+    if (lightbox.hidden) return;
+    if (e.target.closest('.lightbox__bar')) return;   // над тулбаром колесо не зумит
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 1.18 : 1 / 1.18, e.clientX, e.clientY);
+  }, { passive: false });
+
+  lightbox.addEventListener('dblclick', function (e) {
+    if (!e.target.closest('.lightbox__img')) return;
+    if (zoom.scale > 1) resetZoom(); else zoomBy(2.2, e.clientX, e.clientY);
+  });
+
+  lightbox.addEventListener('pointerdown', function (e) {
+    var img = e.target.closest('.lightbox__img');
+    if (!img || lightbox.hidden) return;
+    if (e.pointerType === 'touch' && e.isPrimary === false) return;
+    drag = { x: e.clientX, y: e.clientY, ox: zoom.x, oy: zoom.y, moved: false, id: e.pointerId };
+    if (zoom.scale > 1) {
+      e.preventDefault();
+      try { img.setPointerCapture(e.pointerId); } catch (err) {}
+    }
+  });
+  lightbox.addEventListener('pointermove', function (e) {
+    if (!drag) return;
+    var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    if (zoom.scale > 1) { zoom.x = drag.ox + dx; zoom.y = drag.oy + dy; applyZoom(); }
+  });
+  lightbox.addEventListener('pointerup', function (e) {
+    if (!drag) return;
+    // Короткий тап пальцем переключает масштаб: на телефоне это привычнее,
+    // чем искать кнопки. Для мыши масштаб переключает dblclick — иначе оба
+    // обработчика сработали бы на один двойной клик и гасили друг друга.
+    var tap = !drag.moved && e.pointerType !== 'mouse' && Date.now() - lastPinch > 350;
+    drag = null;
+    if (tap) {
+      if (zoom.scale > 1) resetZoom(); else zoomBy(2.2, e.clientX, e.clientY);
+    }
+  });
+  lightbox.addEventListener('pointercancel', function () { drag = null; });
+
+  // Щипок двумя пальцами.
+  lightbox.addEventListener('touchstart', function (e) {
+    if (e.touches.length === 2) {
+      drag = null;
+      pinch = { d: Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY), s: zoom.scale };
+    }
+  }, { passive: true });
+  lightbox.addEventListener('touchmove', function (e) {
+    if (e.touches.length !== 2 || !pinch) return;
+    e.preventDefault();
+    var d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    zoom.scale = clampZoom(pinch.s * (d / pinch.d));
+    if (zoom.scale === 1) { zoom.x = 0; zoom.y = 0; }
+    applyZoom();
+  }, { passive: false });
+  lightbox.addEventListener('touchend', function (e) {
+    if (e.touches.length < 2) { if (pinch) lastPinch = Date.now(); pinch = null; }
+  }, { passive: true });
 
   // Поиск в атласе без перерисовки всей страницы на каждый символ.
   document.addEventListener('input', function (e) {
@@ -1155,7 +1300,14 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') { if (!lightbox.hidden) closeLightbox(); else if (!modalRoot.hidden) closeModal(); return; }
-    if (!lightbox.hidden || !modalRoot.hidden) return;
+    if (!lightbox.hidden) {
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomBy(1.6); }
+      if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomBy(1 / 1.6); }
+      if (e.key === '0') { e.preventDefault(); resetZoom(); }
+      if (e.key.toLowerCase() === 'f') { e.preventDefault(); toggleFullscreen(); }
+      return;
+    }
+    if (!modalRoot.hidden) return;
     if (route() !== 'train' || !state.session || sessionDone()) return;
     var tag = (e.target.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'textarea') {
@@ -1163,6 +1315,7 @@
       return;
     }
     var card = currentCard(), ans = card && state.session.answers[card.id];
+    if (e.key === 'ArrowLeft' && state.session.idx > 0) { e.preventDefault(); prev(); return; }
     if (ans) {
       if (e.key === 'Enter') { e.preventDefault(); next(); }
       return;
