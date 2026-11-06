@@ -111,6 +111,14 @@
     try { return new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
     catch (e) { return ''; }
   }
+  /* Подпись к снимку до ответа. «Слайд 113» — это тот же номер препарата:
+     по нему легко найти подпись в атласе, поэтому в вопросе его нет. */
+  function slotLabel(card) {
+    var idx = state.session ? state.session.ids.indexOf(card.id) : -1;
+    return 'Снимок ' + (idx >= 0 ? idx + 1 : 1) + ' из ' +
+      (state.session ? state.session.ids.length : 1);
+  }
+
   function badge(g) {
     var s = systemById[g.system];
     return '<span class="badge">' + (g.number ? '№ ' + esc(g.number) : esc(s ? s.title : '')) + '</span>';
@@ -377,13 +385,15 @@
     var p = prog(card.id);
 
     var media = '<section class="card quiz__media">' +
-      '<div class="quiz__imgwrap" data-action="zoom" data-src="' + esc(card.clean) + '" data-cap="' + esc(g.title) + ' · ' + esc(card.source) + '">' +
+      '<div class="quiz__imgwrap" data-action="zoom" data-src="' + esc(card.clean) + '" data-cap="' + esc(slotLabel(card)) + ' · препарат без подписей">' +
         '<img src="' + esc(card.clean) + '" alt="Микропрепарат без подписей" loading="eager">' +
         '<span class="quiz__zoomhint">Нажмите, чтобы увеличить</span>' +
       '</div>' +
-      // Номер препарата — часть ответа: в вопросе его не показываем.
-      '<div class="quiz__meta"><div class="chip-row">' + (mentionsAnswer(sys.title, g) ? '' : '<span class="badge">' + esc(sys.title) + '</span>') + maskBadge(card) +
-        '<span class="badge">' + esc(card.source) + '</span></div>' +
+      // В вопросе не подсказываем ответ: ни номер препарата, ни раздел
+      // (например «Эндокринная система»), ни название в подписи к снимку.
+      // Номер и раздел появляются в разборе после ответа.
+      '<div class="quiz__meta"><div class="chip-row">' + maskBadge(card) +
+        '<span class="badge">' + esc(slotLabel(card)) + '</span></div>' +
         '<button type="button" class="btn btn--sm btn--ghost" data-action="favorite">' + (p.favorite ? '★ В избранном' : '☆ В избранное') + '</button></div>' +
       '</section>';
 
@@ -397,7 +407,10 @@
           '<span class="quiz__count">Вопрос ' + (s.idx + 1) + ' из ' + s.ids.length + '</span>' +
         '</div><span class="badge">' + esc(s.label) + '</span></div>' +
       '<div class="quiz__question">Что за препарат на снимке?</div>' +
-      '<div class="quiz__sub">' + (hinted ? 'Подсказка: ' + esc(systemHint(sys, g)) + ' · окраска ' + esc(g.stain) : 'Ориентируйтесь на структуру ткани и окраску.') + '</div>';
+      // Подсказка по требованию — про ткань и окраску. Раздел и номер
+      // препарата сюда не попадают: «Эндокринная система» или «№ 91»
+      // выдают ответ не хуже названия.
+      '<div class="quiz__sub">' + (hinted ? 'Подсказка: ' + esc(hintClue(g)) + ' · окраска ' + esc(stainWord(g.stain)) : 'Ориентируйтесь на структуру ткани и окраску.') + '</div>';
 
     if (hinted && !ans) {
       // В режиме выбора маска букв — это готовый ответ: из четырёх вариантов
@@ -449,6 +462,12 @@
       '<button type="button" class="btn btn--sm" data-action="abort">Выйти из сессии</button></div>' +
       '<div class="quiz">' + media + right + '</div>';
   }
+  /* Окраска — часть подсказки, но только сама краска: «гематоксилин-эозин»
+     без слов «метод»/«по Маллори» — так в названии препарата не угадывается ответ. */
+  function stainWord(stain) {
+    return String(stain || '').replace(/^\s*(по|метод[а-я]*)\s+/i, '').trim();
+  }
+
   function maskTitle(g) {
     var t = shortTitle(g);
     return t.split('').map(function (ch, i) {
@@ -701,6 +720,9 @@
      эмбриональные ткани» однозначно указывает на плаценту. В таком случае
      показываем нейтральную подпись. */
   function systemHint(sys, g) {
+    // Подсказка по требованию — это описание ткани, а не название раздела:
+    // «Эндокринная система» сама по себе выдаёт половину ответов. Раздел
+    // называем только если он не подсказывает название препарата.
     return mentionsAnswer(sys.title, g) ? 'Раздел скрыт' : sys.title;
   }
   /* Встречается ли в тексте название препарата — в том числе внутри слова
